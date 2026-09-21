@@ -1,0 +1,1 @@
+{'x': -inf, 'y': +nan, 'z': Infinity}

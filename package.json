@@ -1,0 +1,43 @@
+{
+  "name": "json-dialect",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Python 字面量 ↔ Java/标准 JSON 双向转换的纯本地 Chrome 扩展（MV3）",
+  "type": "module",
+  "scripts": {
+    "build": "vite build && node tools/copy-manifest.mjs",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:golden": "vitest run tests/golden",
+    "test:prop": "vitest run tests/prop",
+    "test:ac": "vitest run tests/acceptance",
+    "verify:python": "python3 tools/verify_with_python.py",
+    "bench": "vitest run tests/bench --reporter=basic",
+    "check:privacy": "node tools/check-privacy.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify:all": "npm run typecheck && npm run test && npm run verify:python && npm run check:privacy"
+  },
+  "keywords": [
+    "chrome-extension",
+    "json",
+    "python"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@codemirror/lang-json": "^6.0.1",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/language": "^6.10.8",
+    "@codemirror/state": "^6.5.1",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@codemirror/view": "^6.36.4",
+    "@types/node": "^26.6.2",
+    "fast-check": "^3.23.2",
+    "jsdom": "^30.1.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "codemirror": "^6.0.2"
+  }
+}

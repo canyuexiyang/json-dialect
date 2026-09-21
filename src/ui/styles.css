@@ -1,0 +1,356 @@
+/* JSON Dialect —— 弹窗与放大页样式
+   FR-F1 设计基准 720×600；FR-F7 深浅色跟随系统 */
+
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f6f7f9;
+  --border: #e3e6ea;
+  --text: #1f2328;
+  --text-dim: #6b7280;
+  --accent: #2563eb;
+  --accent-soft: #dbeafe;
+  --danger: #dc2626;
+  --warn: #b45309;
+  --warn-soft: #fef3c7;
+  --ok: #16a34a;
+  --radius: 6px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* FR-F7：跟随系统深浅色偏好 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1c1f;
+    --bg-soft: #232629;
+    --border: #34383d;
+    --text: #e6e8eb;
+    --text-dim: #9aa1a9;
+    --accent: #60a5fa;
+    --accent-soft: #1e3a5f;
+    --danger: #f87171;
+    --warn: #fbbf24;
+    --warn-soft: #3d3016;
+    --ok: #4ade80;
+  }
+}
+
+body.theme-dark {
+  --bg: #1a1c1f;
+  --bg-soft: #232629;
+  --border: #34383d;
+  --text: #e6e8eb;
+  --text-dim: #9aa1a9;
+  --accent: #60a5fa;
+  --accent-soft: #1e3a5f;
+  --danger: #f87171;
+  --warn: #fbbf24;
+  --warn-soft: #3d3016;
+  --ok: #4ade80;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  width: 720px;
+  height: 600px;
+  overflow: hidden;
+}
+
+.app--large {
+  width: 100vw;
+  height: 100vh;
+}
+
+/* ① 顶部判定条 */
+.detectbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-soft);
+  flex: 0 0 auto;
+}
+
+.detectbar__label {
+  font-weight: 600;
+}
+
+.detectbar__select {
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge--stale {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+/* ②③ 输入/输出区 */
+.pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pane__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+.pane__title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.stats {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  border: none;
+}
+
+.editor .cm-editor {
+  height: 100%;
+}
+
+.editor--out.is-stale {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+
+/* 分隔条（FR-F8） */
+.splitter {
+  flex: 0 0 5px;
+  cursor: row-resize;
+  background: var(--border);
+}
+.splitter:hover {
+  background: var(--accent);
+}
+
+/* 修正提示条 */
+.fixbar {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 12px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  max-height: 130px;
+  overflow: auto;
+}
+
+.fixbar--warn {
+  font-weight: 700;
+}
+
+.fixbar__caret {
+  display: inline-block;
+  transition: transform 0.15s;
+}
+
+.fixbar--open .fixbar__caret {
+  transform: rotate(180deg);
+}
+
+.fixbar__detail {
+  display: none;
+  margin: 6px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+.fixbar--open .fixbar__detail {
+  display: block;
+}
+
+/* 类型调整面板（FR-C11） */
+.typepanel {
+  flex: 0 0 auto;
+  max-height: 150px;
+  overflow: auto;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+
+.typepanel__head {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.typepanel__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.typepanel__path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 120px;
+}
+
+.typedrop {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ⑤ 底部操作栏 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+  flex: 0 0 auto;
+}
+
+.toolbar__actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.btn {
+  font: inherit;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn--ghost {
+  background: transparent;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.statusmsg {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.statusmsg--error {
+  color: var(--danger);
+}
+
+/* FR-D10：解析失败时的来源格式切换建议 */
+.suggest {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.suggest__tip {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.suggest__btn {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.suggest__btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+/* 错误行高亮（M2-2）：由 CodeMirror StateField 装饰驱动，不直操作 DOM */
+.cm-line.cm-errorLine {
+  background: rgba(220, 38, 38, 0.14);
+  border-left: 2px solid var(--danger);
+}
+
+.cm-errorText {
+  text-decoration: underline wavy var(--danger);
+  text-underline-offset: 3px;
+}
+
+.cm-errorGutter-gutter {
+  width: 12px;
+}
+
+.cm-errorGutter {
+  color: var(--danger);
+  font-size: 9px;
+  line-height: 1;
+  padding-left: 2px;
+}
+
+body.theme-dark .cm-line.cm-errorLine {
+  background: rgba(248, 113, 113, 0.16);
+}

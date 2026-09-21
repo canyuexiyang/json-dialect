@@ -1,0 +1,202 @@
+[
+  {
+    "name": "py_simple",
+    "format": "python",
+    "file": "py_simple.in.txt"
+  },
+  {
+    "name": "py_bool_none",
+    "format": "python",
+    "file": "py_bool_none.in.txt"
+  },
+  {
+    "name": "json_tri",
+    "format": "json",
+    "file": "json_tri.in.txt"
+  },
+  {
+    "name": "py_bigint",
+    "format": "python",
+    "file": "py_bigint.in.txt"
+  },
+  {
+    "name": "py_float",
+    "format": "python",
+    "file": "py_float.in.txt"
+  },
+  {
+    "name": "py_order",
+    "format": "python",
+    "file": "py_order.in.txt"
+  },
+  {
+    "name": "json_quote1",
+    "format": "json",
+    "file": "json_quote1.in.txt"
+  },
+  {
+    "name": "py_quote2",
+    "format": "python",
+    "file": "py_quote2.in.txt"
+  },
+  {
+    "name": "json_quote3",
+    "format": "json",
+    "file": "json_quote3.in.txt"
+  },
+  {
+    "name": "json_newline",
+    "format": "json",
+    "file": "json_newline.in.txt"
+  },
+  {
+    "name": "map_basic",
+    "format": "map",
+    "file": "map_basic.in.txt"
+  },
+  {
+    "name": "java_esc",
+    "format": "java",
+    "file": "java_esc.in.txt"
+  },
+  {
+    "name": "json_cjk",
+    "format": "json",
+    "file": "json_cjk.in.txt"
+  },
+  {
+    "name": "map_eq_in_val",
+    "format": "map",
+    "file": "map_eq_in_val.in.txt"
+  },
+  {
+    "name": "json_escaped",
+    "format": "json",
+    "file": "json_escaped.in.txt"
+  },
+  {
+    "name": "arr_plain",
+    "format": "json",
+    "file": "arr_plain.in.txt"
+  },
+  {
+    "name": "py_trailing",
+    "format": "python",
+    "file": "py_trailing.in.txt"
+  },
+  {
+    "name": "py_bare_key",
+    "format": "python",
+    "file": "py_bare_key.in.txt"
+  },
+  {
+    "name": "py_comment",
+    "format": "python",
+    "file": "py_comment.in.txt"
+  },
+  {
+    "name": "map_nested",
+    "format": "map",
+    "file": "map_nested.in.txt"
+  },
+  {
+    "name": "map_arr_obj",
+    "format": "map",
+    "file": "map_arr_obj.in.txt"
+  },
+  {
+    "name": "map_empty",
+    "format": "map",
+    "file": "map_empty.in.txt"
+  },
+  {
+    "name": "map_arr_arr",
+    "format": "map",
+    "file": "map_arr_arr.in.txt"
+  },
+  {
+    "name": "json_dupkey",
+    "format": "json",
+    "file": "json_dupkey.in.txt"
+  },
+  {
+    "name": "py_nan",
+    "format": "python",
+    "file": "py_nan.in.txt"
+  },
+  {
+    "name": "py_numkey",
+    "format": "python",
+    "file": "py_numkey.in.txt"
+  },
+  {
+    "name": "py_tuple",
+    "format": "python",
+    "file": "py_tuple.in.txt"
+  },
+  {
+    "name": "json_deep",
+    "format": "json",
+    "file": "json_deep.in.txt"
+  },
+  {
+    "name": "py_mixed",
+    "format": "python",
+    "file": "py_mixed.in.txt"
+  },
+  {
+    "name": "json_emoji",
+    "format": "json",
+    "file": "json_emoji.in.txt"
+  },
+  {
+    "name": "map_deep3",
+    "format": "map",
+    "file": "map_deep3.in.txt"
+  },
+  {
+    "name": "map_cjk_nested",
+    "format": "map",
+    "file": "map_cjk_nested.in.txt"
+  },
+  {
+    "name": "py_trailing_arr",
+    "format": "python",
+    "file": "py_trailing_arr.in.txt"
+  },
+  {
+    "name": "py_comment_inline",
+    "format": "python",
+    "file": "py_comment_inline.in.txt"
+  },
+  {
+    "name": "py_unclosed_brace",
+    "format": "python",
+    "file": "py_unclosed_brace.in.txt"
+  },
+  {
+    "name": "json_trailing_obj",
+    "format": "json",
+    "file": "json_trailing_obj.in.txt"
+  },
+  {
+    "name": "json_bare_key",
+    "format": "json",
+    "file": "json_bare_key.in.txt"
+  },
+  {
+    "name": "py_signed_nan",
+    "format": "python",
+    "file": "py_signed_nan.in.txt"
+  },
+  {
+    "name": "py_boolkey",
+    "format": "python",
+    "file": "py_boolkey.in.txt"
+  },
+  {
+    "name": "map_space_val",
+    "format": "map",
+    "file": "map_space_val.in.txt"
+  }
+]

@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "JSON Dialect",
+  "version": "1.0.0",
+  "description": "Python 字面量与 Java/标准 JSON 双向转换，纯本地、容错优先",
+  "permissions": ["storage"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "JSON Dialect"
+  },
+  "icons": {}
+}

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JSON Dialect · 放大页</title>
+    <script type="module" crossorigin src="/assets/app-CrsnW3dx.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/controller-CIw38rd8.js">
+    <link rel="stylesheet" crossorigin href="/assets/controller-l3kN7c_1.css">
+  </head>
+  <body class="app-page">
+    <div id="app" class="app app--large">
+      <header class="detectbar">
+        <span class="detectbar__label" id="fmtLabel">标准 JSON</span>
+        <span class="badge" id="lockBadge" hidden>手动锁定</span>
+        <select id="fmtSelect" class="detectbar__select" aria-label="来源格式">
+          <option value="json">标准 JSON</option>
+          <option value="python">Python 字面量</option>
+          <option value="java">Java 转义字符串</option>
+          <option value="map">Map.toString()</option>
+        </select>
+        <button id="resetAuto" class="btn btn--ghost" hidden>重置为自动</button>
+      </header>
+
+      <section class="pane pane--in">
+        <div class="pane__head">
+          <span class="pane__title">输入</span>
+          <span class="stats" id="statsIn">行 1 · 字符 0</span>
+        </div>
+        <div id="editorIn" class="editor"></div>
+        <div id="fixbar" class="fixbar" hidden></div>
+      </section>
+
+      <div id="splitter" class="splitter" role="separator" aria-orientation="horizontal"></div>
+
+      <section class="pane pane--out">
+        <div class="pane__head">
+          <span class="pane__title">输出</span>
+          <span class="stats" id="statsOut">行 1 · 字符 0</span>
+          <span class="badge badge--stale" id="staleBadge" hidden>已过期</span>
+        </div>
+        <div id="editorOut" class="editor editor--out"></div>
+        <div id="typePanel" class="typepanel" hidden></div>
+      </section>
+
+      <footer class="toolbar">
+        <span id="statusMsg" class="statusmsg"></span>
+        <div class="toolbar__actions">
+          <button id="btnConvert" class="btn">转换</button>
+          <button id="btnFormat" class="btn">格式化</button>
+          <button id="btnCompact" class="btn">压缩</button>
+          <button id="btnCopy" class="btn btn--primary">复制</button>
+          <button id="btnDownload" class="btn">下载</button>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>
