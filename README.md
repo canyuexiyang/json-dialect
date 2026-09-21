@@ -164,7 +164,6 @@ docs/                     全过程文档（见下）
 
 ### 已知遗留（均为人工事项，无法自动化）
 
-
 | # | 事项 | 说明 |
 |---|---|---|
 | 1 | AC-37 真机零网络请求验证 | 静态扫描已过，须 DevTools Network 面板实机走一遍。**须用缺陷 7 修复后的新产物重验** |
@@ -178,7 +177,7 @@ docs/                     全过程文档（见下）
 1. `GutterMarker` / `gutter` / `Decoration` 在 `@codemirror/view`，**不在** `codemirror` 元包。
 2. jsdom 缺 `Range.getClientRects`，CodeMirror 6 会抛异常 → `tests/setup/cm6-jsdom.ts` 已补。
 3. 错误行高亮别用 `querySelector('.cm-line')[n-1]`（重排会错位），要用 `StateField` + `Decoration`。
-4. `Write` 类工具会吃掉 `\"`、` ` 这类字面转义 → 含控制字符的 TS 源码改用 python heredoc 写入。
+4. `Write` 类工具会吃掉 `\"`、`\u0000` 这类字面转义 → 含控制字符的 TS 源码改用 python heredoc 写入。
 5. Map 语法里**空白是有效内容**，parser 必须扫描原文，不能用 token 拼接还原。
 6. **Vite 不会把根目录的 `manifest.json` 拷进 dist** —— 产物会直接无法加载。`tools/copy-manifest.mjs` 已补上，**任何门禁都测不出这个，只能手验**。
 7. `die()` 返回 `never` 但 TS 不推断 → 需 `return die(...)` 或加 `need()` 类型守卫收窄。
