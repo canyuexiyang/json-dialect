@@ -24,6 +24,7 @@ const ACTION_TEXT: Record<Mark['type'], string> = {
   trailing_comma: '删除末尾多余逗号',
   missing_comma: '补充缺失的逗号',
   tail_ignored: '忽略主干结构之后的残留内容',
+  prefix_stripped: '剥离日志前缀',
   comment_stripped: '剥离行注释',
   bracket_closed: '补齐缺失的右括号',
   nan_converted: '非 JSON 数值转换为 null',

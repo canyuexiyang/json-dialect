@@ -18,11 +18,25 @@ import { parseMap } from './parse/mapText.js';
 import { parseJavaEsc } from './parse/javaEsc.js';
 import { toJson } from './serialize/toJson.js';
 import { toPython, type TypeOverride } from './serialize/toPython.js';
+import { toJavaEsc } from './serialize/toJavaEsc.js';
 import { marksToFixes, dedupeFixes, type FixEntry, type DuplicateInfo } from './fixLog.js';
 import { Deadline, ParseError, TimeoutError } from './errors.js';
+import { findLogPrefix, type LogPrefix } from './logPrefix.js';
 import { keyToString, type JVal } from './ir.js';
-import { outputLangFor, type OutputLang, type SourceFormat } from './types.js';
+import {
+  outputLangFor,
+  sameTarget,
+  type OutputLang,
+  type SourceFormat,
+  type TargetFormat,
+} from './types.js';
 import type { ValueSlot } from './parse/engine.js';
+
+/** 日志前缀剥离尝试（FR-D13）：解析失败时附带，供 UI 提供一键入口 */
+export interface PrefixHint {
+  prefix: string;
+  body: string;
+}
 
 export type ConvertStatus = 'empty' | 'ok' | 'fixed' | 'fallback' | 'error' | 'timeout';
 
@@ -41,6 +55,10 @@ export interface ConvertResult {
   fixes: FixEntry[];
   duplicates?: DuplicateInfo;
   error?: { kind: string; line: number; col: number; message: string };
+  /** FR-D13：解析失败且疑似日志前缀时给出一键剥离入口 */
+  prefixHint?: PrefixHint;
+  /** 实际生效的目标（'same' 解析后）；map 来源取 'same' 会回退为 auto（O-7） */
+  resolvedTarget?: TargetFormat | 'auto';
   stats: { lines: number; chars: number };
 }
 
@@ -53,6 +71,25 @@ export interface ConvertOptions {
   /** 已存在的 token 流（放大页复用，避免重复扫描） */
   tokens?: Token[];
   rawText?: string;
+  /**
+   * FR-A17：目标格式。默认 'auto'（沿用 v1.0 的「由来源推导」规则，行为不变）。
+   * 该选择**不得**影响来源格式判定（AC-66）。
+   *
+   * `'same'` = FR-A19「目标 = 来源」，即同语言规范化（格式化 tab 使用）。
+   * 来源为 map 时无对应序列化器，回退为 auto 并由 `sameTargetFallback` 标记告知。
+   */
+  target?: TargetFormat | 'auto' | 'same';
+  /**
+   * FR-K1：格式化 tab 的严格档。
+   * true = 只跑严格解析，不进宽松层、不做跨格式回退 —— 任何偏差直接报错。
+   * 与「目标 = 来源」配合即「同语言规范化且不改数据」。
+   */
+  strictOnly?: boolean;
+  /**
+   * FR-D13/D14：已由用户确认剥离的日志前缀。
+   * 传入后不再解析该前缀，并把「剥离了什么」写进修正记录 —— 剥离本身必须可见。
+   */
+  strippedPrefix?: string;
 }
 
 interface ParserOpts {
@@ -71,6 +108,12 @@ const PARSERS: Record<
   map: parseMap,
   java: parseJavaEsc,
 };
+
+/** 修正记录片段截断，与 fixLog.ts 的 clip 保持一致 */
+function clipForMark(s: string): string {
+  const one = s.replace(/\n/g, '\\n');
+  return one.length > 24 ? one.slice(0, 24) + '…' : one;
+}
 
 /** FR-F4：字符数按 Unicode 码点；行数 = 换行符数 + 1 */
 export function computeStats(text: string): { lines: number; chars: number } {
@@ -130,7 +173,7 @@ export function convert(text: string, opts: ConvertOptions = {}): ConvertResult 
     source,
     locked,
     output: '',
-    outputLang: outputLangFor(source),
+    outputLang: outputLangFor(source, opts.target),
     values: [],
     fixes: [],
     stats,
@@ -140,26 +183,44 @@ export function convert(text: string, opts: ConvertOptions = {}): ConvertResult 
     return emptyBase(opts.force ?? 'json', !!opts.force);
   }
 
-  const lexed = opts.tokens ? null : lex(text);
+  // FR-D13：已确认剥离的前缀 → 只解析主体，并把剥离动作记进修正记录（FR-D14）
+  let working = text;
+  let prefixMark: Mark | null = null;
+  if (opts.strippedPrefix && text.startsWith(opts.strippedPrefix)) {
+    working = text.slice(opts.strippedPrefix.length);
+    prefixMark = {
+      type: 'prefix_stripped',
+      line: 1,
+      col: 0,
+      before: clipForMark(opts.strippedPrefix),
+      after: '',
+    };
+  }
+
+  const lexed = opts.tokens ? null : lex(working);
   const tokens = opts.tokens ?? lexed!.tokens;
   const sig = significant(tokens);
-  const primary: SourceFormat = opts.force ?? detect(tokens, text).format;
+  const primary: SourceFormat = opts.force ?? detect(tokens, working).format;
   const locked = !!opts.force;
 
   const deadline = new Deadline(Date.now() + (opts.timeoutMs ?? 3000));
 
-  const order: SourceFormat[] = locked ? [primary] : [primary, ...fallbackOrder(primary)];
+  // FR-K1 严格档：只跑严格层、不跨格式回退 —— 语法偏差一律报错，不自动修复
+  const strictOnly = opts.strictOnly ?? false;
+  const order: SourceFormat[] = locked || strictOnly
+    ? [primary]
+    : [primary, ...fallbackOrder(primary)];
   let lastErr: ParseError | null = null;
   // 注释剥离发生在 lexer 层，其修正记录存在于完整 token 流中；
   // 成功路径需把它并入 fixLog，否则 AC-19「修正条列出剥离位置」不成立。
-  const lexMarks = lexed?.marks ?? [];
+  const lexMarks = prefixMark ? [prefixMark, ...(lexed?.marks ?? [])] : (lexed?.marks ?? []);
 
   for (let oi = 0; oi < order.length; oi++) {
     const fmt = order[oi];
     const parser = PARSERS[fmt];
     // 严格层
     try {
-      const r = parser(sig, { strict: true, deadline, rawText: text });
+      const r = parser(sig, { strict: true, deadline, rawText: working });
       return buildResult(
         r.ir,
         r.marks,
@@ -181,10 +242,12 @@ export function convert(text: string, opts: ConvertOptions = {}): ConvertResult 
         };
       }
       lastErr = e as ParseError;
+      // 严格档到此为止：不再进宽松层、不再跨格式回退
+      if (strictOnly) break;
     }
     // 宽松层
     try {
-      const r = parser(sig, { strict: false, deadline, rawText: text });
+      const r = parser(sig, { strict: false, deadline, rawText: working });
       return buildResult(
         r.ir,
         r.marks,
@@ -209,16 +272,20 @@ export function convert(text: string, opts: ConvertOptions = {}): ConvertResult 
     }
   }
 
-  // 全部失败
+  // 全部失败（FR-D13）：若主干结构之前存在疑似日志前缀，给出一键剥离入口。
+  // 注意只在此处「建议」，是否真的剥离由用户点击决定 —— 绝不自动剥。
+  const hint = prefixMark ? null : findLogPrefix(text);
+
   return {
     status: 'error',
     source: primary,
     locked,
     output: '',
-    outputLang: outputLangFor(primary),
+    outputLang: outputLangFor(primary, opts.target),
     values: [],
     fixes: [],
     stats,
+    prefixHint: hint ? { prefix: hint.prefix, body: hint.body } : undefined,
     error: lastErr
       ? { kind: lastErr.kind, line: lastErr.line, col: lastErr.col, message: lastErr.message }
       : { kind: 'unexpected_char', line: 1, col: 0, message: '第 1 行第 0 列：解析失败' },
@@ -238,11 +305,9 @@ function buildResult(
   lexMarks: Mark[] = [],
 ): ConvertResult {
   const fixes = dedupeFixes(marksToFixes([...lexMarks, ...marks]));
-  const outLang = outputLangFor(fmt);
-  const output =
-    outLang === 'json'
-      ? toJson(ir, { compact: opts.compact })
-      : toPython(ir, { compact: opts.compact }, opts.overrides);
+  const resolved: TargetFormat | 'auto' = opts.target === 'same' ? sameTarget(fmt) : (opts.target ?? 'auto');
+  const outLang = outputLangFor(fmt, resolved);
+  const output = serialize(ir, outLang, opts);
   // 修正记录可能来自 lexer 层（如注释剥离），故以 fixes 是否为空为准，而非「走了第几层」
   const status: ConvertStatus = fallbackFrom ? 'fallback' : fixes.length > 0 ? 'fixed' : 'ok';
   return {
@@ -252,6 +317,7 @@ function buildResult(
     fallbackFrom,
     output,
     outputLang: outLang,
+    resolvedTarget: resolved,
     ir,
     values,
     fixes,
@@ -260,5 +326,17 @@ function buildResult(
   };
 }
 
-export { lex, detect, toJson, toPython, ParseError, TimeoutError };
-export type { JVal, SourceFormat, OutputLang, ValueSlot, FixEntry, Token };
+/** 按目标语言选择序列化器（FR-A13 修订 / FR-A17 / FR-A18 / FR-A19） */
+function serialize(ir: JVal, lang: OutputLang, opts: ConvertOptions): string {
+  switch (lang) {
+    case 'json':
+      return toJson(ir, { compact: opts.compact });
+    case 'java':
+      return toJavaEsc(ir, { compact: opts.compact });
+    case 'python':
+      return toPython(ir, { compact: opts.compact }, opts.overrides);
+  }
+}
+
+export { lex, detect, toJson, toPython, toJavaEsc, ParseError, TimeoutError };
+export type { JVal, SourceFormat, OutputLang, TargetFormat, ValueSlot, FixEntry, Token };

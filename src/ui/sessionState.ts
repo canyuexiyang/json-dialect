@@ -11,6 +11,12 @@ export interface SessionState {
   locked?: boolean;
   compact?: boolean;
   overrides?: Array<[string, string]>;
+  /** O-9：tab / 目标 / 严格档 / 转义设置需一并继承，否则放大页回到默认 tab */
+  tab?: string;
+  target?: string;
+  strict?: boolean;
+  escapeStyle?: string;
+  escapeDir?: string;
 }
 
 const KEY = 'json-dialect-session';
@@ -80,6 +86,14 @@ export async function consumeSession(): Promise<SessionState | null> {
 export interface Prefs {
   compact?: boolean;
   splitRatio?: number;
+  /** FR-L3：tab 记忆。无历史偏好时回落到默认「格式化」 */
+  tab?: string;
+  /** FR-A17：转换 tab 的目标格式 */
+  target?: string;
+  /** FR-K3：格式化 tab 的容错档位，独立于转换 tab 的目标格式 */
+  strict?: boolean;
+  /** FR-I5：转义 tab 的方向（去除转义 / 增加转义），历史偏好覆盖默认值 */
+  escapeDir?: string;
 }
 
 const PREF_KEY = 'json-dialect-prefs';

@@ -14,6 +14,8 @@ export type ErrorKind =
   | 'unexpected_char' // 存在无法识别的字符
   | 'bad_value' // 类型无法推断 / 非法值
   | 'unexpected_token' // 结构位置出现不应出现的 token
+  | 'trailing_content' // 主干结构之后存在多余内容（FR-D11）
+  | 'multiple_values' // 检测到多个并列值（JSON Lines，FR-D11）
   | 'empty_input';
 
 const KIND_TEXT: Record<ErrorKind, string> = {
@@ -23,6 +25,8 @@ const KIND_TEXT: Record<ErrorKind, string> = {
   unexpected_char: '存在无法识别的字符',
   bad_value: '类型无法推断',
   unexpected_token: '结构不完整',
+  trailing_content: '尾部存在多余内容',
+  multiple_values: '检测到多个并列值',
   empty_input: '输入为空',
 };
 

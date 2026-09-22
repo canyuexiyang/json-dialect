@@ -1,0 +1,1 @@
+2024-01-01 12:00:00 ERROR com.foo.Bar - {"code":500,"msg":"boom"}

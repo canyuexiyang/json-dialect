@@ -119,6 +119,8 @@ describe('UI 初始化不得被 storage 挂起阻塞', () => {
     const app = new AppController(dom);
     const p = app.init();
 
+    // v1.1 默认 tab = 格式化（同语言进出）；本用例验的是「跨语言转换仍可用」
+    app.switchTab('convert');
     app.setInput("{'a': 1, 'b': True}");
     expect(app.output).toContain('"a": 1');
     expect(app.output).toContain('"b": true');

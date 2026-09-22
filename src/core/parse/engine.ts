@@ -85,6 +85,12 @@ function mk(
   return { type, line: t?.line ?? 1, col: t?.col ?? 0, before, after };
 }
 
+/** 报错文案里的片段截断，避免超长文本撑爆提示条 */
+function clipSnippet(s: string): string {
+  const one = s.replace(/\n/g, '\\n');
+  return one.length > 16 ? one.slice(0, 16) + '…' : one;
+}
+
 export function parseValue(
   toks: Token[],
   opts: ParseOptions,
@@ -402,11 +408,21 @@ export function parseValue(
 
   const root = parseNode(0);
 
-  // 尾部残留：strict 模式报错；宽松模式尝试忽略
+  // 尾部残留（FR-D11）：主干结构解析完成后仍有未消费 token → 一律报错，绝不静默丢弃。
+  //
+  // 历史缺陷：这里曾无条件 push 一条 `trailing_comma` 修正后继续返回成功，
+  // 导致 `2024-01-01 12:00:00 INFO {"a":1}` 输出成 `2024-01-01`、
+  // `{"a":1}\n{"b":2}` 只输出第一个对象，而状态却报「已自动修正」—— 静默丢数据。
+  // 「能救就救」只适用于**同一个值内部的语法残缺**，丢弃额外的值不是修复。
   if (!c.eof()) {
     const rest = c.peek()!;
-    if (strict) die('unexpected_token', rest, '尾部存在多余内容');
-    marks.push(mk('trailing_comma', rest, rest.raw, ''));
+    // 区分两种形态：并列多个值（JSON Lines）vs 单纯尾部垃圾
+    const isAnotherValue =
+      rest.type === 'punct' && (rest.raw === '{' || rest.raw === '[' || rest.raw === '(');
+    if (isAnotherValue) {
+      die('multiple_values', rest, '本工具一次只处理一个值');
+    }
+    die('trailing_content', rest, `多余内容「${clipSnippet(rest.raw)}」`);
   }
 
   collect(root, '');

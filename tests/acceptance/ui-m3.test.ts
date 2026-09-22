@@ -153,37 +153,49 @@ describe('M3-2 格式化 / 压缩（FR-E1~E3）', () => {
     expect(compactOut).toContain('hello  world'); // 字符串内部双空格保留
   });
 
-  it('点击「压缩」/「格式化」切换模式', async () => {
+  it('点击「缩进」按钮在美化 / 压缩间切换（FR-K4）', async () => {
     const { ctrl, dom } = await make();
     ctrl.setInput("{'a': 1}");
-    expect(ctrl.output).toContain('\n'); // 默认格式化
+    expect(ctrl.output).toContain('\n'); // 默认美化
+    expect(dom.btnCompact.textContent).toBe('缩进：美化');
     dom.btnCompact.click();
     expect(ctrl.output).not.toContain('\n');
-    dom.btnFormat.click();
+    expect(dom.btnCompact.textContent).toBe('缩进：压缩');
+    dom.btnCompact.click();
     expect(ctrl.output).toContain('\n');
   });
 });
 
 describe('M3-3 下载按方向切扩展名（FR-E7/E7a）', () => {
   it('输出为 JSON 时按钮显示 .json', async () => {
-    const { dom } = await make();
-    // Python 输入 → JSON 输出
-    const ctrl = (await make()).ctrl;
-    ctrl.setInput("{'a': 1}");
+    const { ctrl, dom } = await make();
+    ctrl.switchTab('convert'); // 默认 tab 是格式化（同语言进出）
+    ctrl.setInput("{'a': 1}"); // Python 输入 → JSON 输出
     expect(dom.btnDownload.textContent).toBe('下载 .json');
   });
 
   it('输出为 Python 时按钮显示 .py', async () => {
     const { ctrl, dom } = await make();
+    ctrl.switchTab('convert');
     ctrl.setInput('{"a": 1}'); // JSON 输入 → Python 输出
     expect(dom.btnDownload.textContent).toBe('下载 .py');
+  });
+
+  it('目标 = Java 转义时按钮显示 .txt（AC-67 / O-3）', async () => {
+    const { ctrl, dom } = await make();
+    ctrl.switchTab('convert');
+    ctrl.setTarget('java');
+    ctrl.setInput('{"a": 1}');
+    expect(dom.btnDownload.textContent).toBe('下载 .txt');
   });
 
   it('AC-31/31a 文件名格式', () => {
     expect(fileNameFor('json')).toMatch(/^json-dialect-output-\d{8}-\d{6}\.json$/);
     expect(fileNameFor('python')).toMatch(/^json-dialect-output-\d{8}-\d{6}\.py$/);
+    expect(fileNameFor('java')).toMatch(/^json-dialect-output-\d{8}-\d{6}\.txt$/);
     expect(downloadLabel('json')).toBe('下载 .json');
     expect(downloadLabel('python')).toBe('下载 .py');
+    expect(downloadLabel('java')).toBe('下载 .txt');
   });
 });
 

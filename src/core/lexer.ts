@@ -25,6 +25,7 @@ export type MarkType =
   | 'trailing_comma' // 删除末尾多余逗号
   | 'missing_comma' // 补充缺失的逗号（两个条目之间）
   | 'tail_ignored' // 忽略主干结构之后的残留内容
+  | 'prefix_stripped' // 剥离主干结构之前的日志前缀（FR-D14）
   | 'comment_stripped' // 剥离 # 注释
   | 'bracket_closed' // 补齐缺失的右括号
   | 'nan_converted' // NaN / Infinity → null（FR-A15）
@@ -129,6 +130,14 @@ export function lex(text: string, opts: LexOptions = {}): LexResult {
 
   while (i < text.length) {
     const ch = text[i];
+
+    // BOM（U+FEFF）：直接跳过，不产出 token（AC-57 / F3）。
+    // 不能改写 text 后再扫描 —— 那会让所有 start 偏移整体前移，
+    // 与「日志前缀剥离按 start 截取原文」的逻辑对不上。
+    if (ch === '\uFEFF') {
+      i++;
+      continue;
+    }
 
     // 换行：增量维护行列（O(1)，不回扫）
     if (ch === '\n') {

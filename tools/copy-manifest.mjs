@@ -33,6 +33,28 @@ for (const key of ['host_permissions']) {
   }
 }
 
+// 顺带拷贝 icons/（FR-J1）。Vite 同样不会带它们 —— 只拷 manifest 而漏掉图标，
+// Chrome 加载时会在扩展管理页报「无法加载图标」，而任何测试都测不出来。
+const iconSrc = path.resolve('icons');
+const iconDst = path.resolve('dist', 'icons');
+let iconCount = 0;
+if (fs.existsSync(iconSrc)) {
+  fs.mkdirSync(iconDst, { recursive: true });
+  for (const f of fs.readdirSync(iconSrc)) {
+    if (!f.endsWith('.png')) continue;
+    fs.copyFileSync(path.join(iconSrc, f), path.join(iconDst, f));
+    iconCount++;
+  }
+}
+// 断言：manifest 声明的图标文件必须真的存在于产物里
+for (const [, rel] of Object.entries(manifest.icons ?? {})) {
+  const abs = path.resolve('dist', rel);
+  if (!fs.existsSync(abs)) {
+    console.error(`manifest 声明的图标缺失于产物：${rel}`);
+    process.exit(1);
+  }
+}
+
 fs.mkdirSync(path.dirname(dst), { recursive: true });
 fs.writeFileSync(dst, raw, 'utf8');
-console.log(`manifest.json → dist/（权限：${JSON.stringify(perms)}）`);
+console.log(`manifest.json → dist/（权限：${JSON.stringify(perms)}，图标 ${iconCount} 个）`);

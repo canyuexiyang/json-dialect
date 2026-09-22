@@ -198,5 +198,87 @@
     "name": "map_space_val",
     "format": "map",
     "file": "map_space_val.in.txt"
+  },
+  {
+    "name": "log_ts_info_obj",
+    "format": "json",
+    "file": "log_ts_info_obj.in.txt",
+    "strippedPrefix": "2024-01-01 12:00:00 INFO "
+  },
+  {
+    "name": "log_ts_error_logger",
+    "format": "json",
+    "file": "log_ts_error_logger.in.txt",
+    "strippedPrefix": "2024-01-01 12:00:00 ERROR com.foo.Bar - "
+  },
+  {
+    "name": "log_ts_warn_arr",
+    "format": "json",
+    "file": "log_ts_warn_arr.in.txt",
+    "strippedPrefix": "2024-03-05 08:07:06 WARN "
+  },
+  {
+    "name": "log_iso_debug",
+    "format": "json",
+    "file": "log_iso_debug.in.txt",
+    "strippedPrefix": "2024-01-01T12:00:00.123Z DEBUG "
+  },
+  {
+    "name": "log_thread_name",
+    "format": "json",
+    "file": "log_thread_name.in.txt",
+    "strippedPrefix": "[http-nio-8080-exec-3] INFO "
+  },
+  {
+    "name": "log_level_only",
+    "format": "json",
+    "file": "log_level_only.in.txt",
+    "strippedPrefix": "INFO: "
+  },
+  {
+    "name": "log_nested_obj",
+    "format": "json",
+    "file": "log_nested_obj.in.txt",
+    "strippedPrefix": "2024-01-01 12:00:00 INFO "
+  },
+  {
+    "name": "log_py_body",
+    "format": "python",
+    "file": "log_py_body.in.txt",
+    "strippedPrefix": "2024-01-01 12:00:00 INFO "
+  },
+  {
+    "name": "log_map_body",
+    "format": "map",
+    "file": "log_map_body.in.txt",
+    "strippedPrefix": "2024-01-01 12:00:00 INFO "
+  },
+  {
+    "name": "log_java_body",
+    "format": "java",
+    "file": "log_java_body.in.txt",
+    "strippedPrefix": "2024-01-01 12:00:00 INFO "
+  },
+  {
+    "name": "log_cjk_msg",
+    "format": "json",
+    "file": "log_cjk_msg.in.txt",
+    "strippedPrefix": "2024-01-01 12:00:00 INFO "
+  },
+  {
+    "name": "log_bracketed_ts",
+    "format": "json",
+    "file": "log_bracketed_ts.in.txt",
+    "strippedPrefix": "[2024-01-01 12:00:00] INFO "
+  },
+  {
+    "name": "neg_plain_obj",
+    "format": "json",
+    "file": "neg_plain_obj.in.txt"
+  },
+  {
+    "name": "neg_plain_arr",
+    "format": "json",
+    "file": "neg_plain_arr.in.txt"
   }
 ]

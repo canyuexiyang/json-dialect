@@ -71,6 +71,9 @@ beforeEach(async () => {
       ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} }) as unknown as MediaQueryList);
   ctrl = new AppController(dom);
   await ctrl.init();
+  // v1.1：默认 tab 改为「格式化」（严格档，不自动修正）。
+  // 本文件测的是「转换 tab 的容错修正语义」，故显式切过去。
+  ctrl.switchTab('convert');
 });
 
 afterEach(() => {

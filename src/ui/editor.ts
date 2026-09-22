@@ -27,7 +27,18 @@ import { json } from '@codemirror/lang-json';
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 
-export type EditorLang = 'json' | 'python';
+/**
+ * 编辑器语言。
+ * `java` 为 Java 转义字符串输出（FR-A18）—— 它是一整行字符串常量，
+ * 套 JSON/Python 语法高亮都会误导，故映射为「无高亮」。
+ */
+export type EditorLang = 'json' | 'python' | 'java';
+
+function langExt(lang: EditorLang): Extension[] {
+  if (lang === 'json') return [json()];
+  if (lang === 'python') return [python()];
+  return [];
+}
 
 /** 错误行装饰：由 StateField 管理，绝不直接操作 DOM（CM6 会重排行元素） */
 const setErrorLine = StateEffect.define<number | null>();
@@ -116,7 +127,7 @@ export function createEditor(
     errorLineField,
     errorLineDeco,
     errorGutter,
-    langCompartment.of(lang === 'json' ? json() : python()),
+    langCompartment.of(langExt(lang)),
     themeCompartment.of(dark ? [oneDark] : []),
     highlightCompartment.of(noHighlight),
     editableCompartment.of([EditorView.editable.of(!readOnly), EditorState.readOnly.of(readOnly)]),
@@ -149,18 +160,18 @@ export function createEditor(
       if (on === highlightOn) return;
       highlightOn = on;
       view.dispatch({
-        effects: highlightCompartment.reconfigure(on ? [currentLang === 'json' ? json() : python()] : []),
+        effects: highlightCompartment.reconfigure(on ? langExt(currentLang) : []),
       });
     },
     setLang(next: EditorLang) {
       if (next === currentLang) return;
       currentLang = next;
       view.dispatch({
-        effects: langCompartment.reconfigure(next === 'json' ? json() : python()),
+        effects: langCompartment.reconfigure(langExt(next)),
       });
       if (highlightOn) {
         view.dispatch({
-          effects: highlightCompartment.reconfigure(next === 'json' ? json() : python()),
+          effects: highlightCompartment.reconfigure(langExt(next)),
         });
       }
     },

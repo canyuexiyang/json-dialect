@@ -11,7 +11,16 @@
  */
 
 import { convert, computeStats, type ConvertResult } from '../core/index.js';
-import type { SourceFormat } from '../core/types.js';
+import type { OutputLang, SourceFormat, TargetFormat } from '../core/types.js';
+import {
+  escapeText,
+  ALL_ESCAPE_STYLES,
+  ESCAPE_LABEL,
+  ESCAPE_DIR_LABEL,
+  oppositeDir,
+  type EscapeStyle,
+  type EscapeDir,
+} from '../core/escapeText.js';
 import { suggestFormats, type FormatSuggestion } from '../core/suggestFormat.js';
 import { createEditor, type EditorHandle } from './editor.js';
 import { copyText, selectAllIn } from './clipboard.js';
@@ -25,6 +34,18 @@ export interface DomRefs {
   fmtSelect: HTMLSelectElement;
   resetAuto: HTMLButtonElement;
   enlarge?: HTMLButtonElement;
+  /** tab 条（FR-L1）：可选 —— 老测试挂载的无 tab DOM 也能跑 */
+  tabFormat?: HTMLButtonElement;
+  tabEscape?: HTMLButtonElement;
+  tabConvert?: HTMLButtonElement;
+  /** 目标格式选择器（FR-A17 / O-6） */
+  targetSelect?: HTMLSelectElement;
+  /** 转义风格选择器（FR-I2）—— 只在转义 tab 显示 */
+  escapeStyleSelect?: HTMLSelectElement;
+  /** 转义方向二选一（FR-I5）—— 只在转义 tab 显示，常驻可见 */
+  escapeDirSeg?: HTMLElement;
+  escapeDirDecode?: HTMLButtonElement;
+  escapeDirEncode?: HTMLButtonElement;
   editorIn: HTMLElement;
   editorOut: HTMLElement;
   statsIn: HTMLElement;
@@ -48,12 +69,29 @@ const T2 = 500_000;
 /** 修正 > 5 处时视觉强调（M2-1） */
 const FIX_WARN_THRESHOLD = 5;
 
+/** 三个功能 tab（FR-L1：顺序固定 ① 格式化 · ② 转义 · ③ 转换） */
+export type TabId = 'format' | 'escape' | 'convert';
+
+const TAB_ORDER: TabId[] = ['format', 'escape', 'convert'];
+
+const TAB_TEXT: Record<TabId, string> = {
+  format: '格式化',
+  escape: '转义',
+  convert: '转换',
+};
+
 /** 放大页从 session 继承的会话态（AC-33 / FR-F6） */
 export interface InheritedState {
   source?: string;
   locked?: boolean;
   compact?: boolean;
   overrides?: Array<[string, string]>;
+  /** O-9：tab / target / strict 需一并继承，否则放大后回到默认 tab */
+  tab?: string;
+  target?: string;
+  strict?: boolean;
+  escapeStyle?: string;
+  escapeDir?: string;
 }
 
 const FORMAT_TEXT: Record<SourceFormat, string> = {
@@ -71,9 +109,23 @@ export class AppController {
   private compact = false;
   private timer: number | undefined;
   private lastGoodOutput = '';
-  private lastGoodLang: 'json' | 'python' = 'json';
+  private lastGoodLang: OutputLang = 'json';
   private panel = createTypePanel();
   private dark = false;
+  /** FR-L2：默认「格式化」（格式化是 v1.1 真实主路径） */
+  private tab: TabId = 'format';
+  /** FR-A17：目标格式，默认 auto（行为与 v1.0 一致） */
+  private target: TargetFormat | 'auto' = 'auto';
+  /** FR-K1：格式化 tab 默认严格档 */
+  private strict = true;
+  /** 转义 tab 状态 */
+  private escapeStyle: EscapeStyle = 'json';
+  private escapeDir: EscapeDir = 'encode';
+  /** FR-D13：已由用户点击确认剥离的日志前缀（下次输入变化即失效） */
+  private strippedPrefix = '';
+  /** 转义 tab 的输出与错误（不走 ConvertResult） */
+  private escapeOutput = '';
+  private escapeError: string | undefined;
 
   constructor(
     private dom: DomRefs,
@@ -106,6 +158,17 @@ export class AppController {
     // 先用继承值/默认值，prefs 到位后再补（见 ②）
     if (inherited?.compact !== undefined) this.compact = inherited.compact;
 
+    // O-9：tab / target / strict / 转义风格一并继承，否则放大后回到默认 tab
+    if (inherited?.tab && isTabId(inherited.tab)) this.tab = inherited.tab;
+    if (inherited?.target && isTargetOpt(inherited.target)) this.target = inherited.target;
+    if (inherited?.strict !== undefined) this.strict = inherited.strict;
+    if (inherited?.escapeStyle && isEscapeStyle(inherited.escapeStyle)) {
+      this.escapeStyle = inherited.escapeStyle;
+    }
+    if (inherited?.escapeDir === 'encode' || inherited?.escapeDir === 'decode') {
+      this.escapeDir = inherited.escapeDir;
+    }
+
     // AC-33：来源判定与类型覆盖必须一并继承，否则放大页只是「文本一样但结果不同」
     if (inherited?.locked && inherited.source && isSourceFormat(inherited.source)) {
       this.setLocked(inherited.source);
@@ -130,6 +193,7 @@ export class AppController {
     });
 
     this.bindEvents();
+    this.renderTabs();
     if (initialInput) this.run(initialInput);
     else this.renderEmpty();
 
@@ -144,9 +208,25 @@ export class AppController {
   private async applyPrefsWhenReady(): Promise<void> {
     const fallback: Prefs = {};
     const prefs = await withTimeout(loadPrefs(), 1500, fallback);
-    if (prefs.compact !== undefined && prefs.compact !== this.compact) {
-      this.compact = prefs.compact;
-      // 已经有输出就按新偏好重渲染一次，保持视觉一致
+
+    // FR-L3 优先级：**历史偏好覆盖默认值**。
+    // 首次安装 / 清数据 → 保持「格式化」；此后 → 上次离开的 tab。
+    // 顺序不能反，否则「记住上次」会把默认值架空。
+    if (prefs.tab && isTabId(prefs.tab) && prefs.tab !== this.tab) this.tab = prefs.tab;
+    if (prefs.target && isTargetOpt(prefs.target)) this.target = prefs.target;
+    if (prefs.strict !== undefined) this.strict = prefs.strict;
+    // FR-I5 / FR-L3 同一优先级：历史偏好覆盖默认值（默认「增加转义」）
+    if (prefs.escapeDir === 'encode' || prefs.escapeDir === 'decode') {
+      this.escapeDir = prefs.escapeDir;
+    }
+    this.renderTabs();
+    this.syncTabControls();
+
+    const compactChanged = prefs.compact !== undefined && prefs.compact !== this.compact;
+    if (compactChanged) this.compact = prefs.compact as boolean;
+
+    // 已经有输出就按新偏好重渲染一次，保持视觉一致
+    if (compactChanged || this.tab) {
       const text = this.in.getDoc();
       if (text.trim() !== '') this.run(text);
     }
@@ -164,24 +244,80 @@ export class AppController {
       this.run(this.in.getDoc());
     });
 
-    this.dom.btnConvert.addEventListener('click', () => this.run(this.in.getDoc()));
+    // FR-L1：tab 切换。三个 tab 不共享输入内容（FR-L4），切换即重跑
+    const tabBtns: Array<[HTMLElement | undefined, TabId]> = [
+      [this.dom.tabFormat, 'format'],
+      [this.dom.tabEscape, 'escape'],
+      [this.dom.tabConvert, 'convert'],
+    ];
+    for (const [btn, id] of tabBtns) {
+      btn?.addEventListener('click', () => this.switchTab(id));
+    }
 
+    // FR-A17：目标格式选择器（O-6：与来源选择器对称，来源 → 目标）
+    this.dom.targetSelect?.addEventListener('change', () => {
+      const v = this.dom.targetSelect!.value;
+      if (isTargetOpt(v)) this.target = v;
+      void this.persist();
+      this.run(this.in.getDoc());
+    });
+
+    // FR-I2：转义风格选择器（四种风格）
+    this.dom.escapeStyleSelect?.addEventListener('change', () => {
+      const v = this.dom.escapeStyleSelect!.value;
+      if (isEscapeStyle(v)) this.escapeStyle = v;
+      void this.persist();
+      this.run(this.in.getDoc());
+    });
+
+    // FR-I5：方向二选一（去除转义 / 增加转义）—— 显式点击，不再靠按钮翻转
+    const dirBtns: Array<[HTMLElement | undefined, EscapeDir]> = [
+      [this.dom.escapeDirDecode, 'decode'],
+      [this.dom.escapeDirEncode, 'encode'],
+    ];
+    for (const [btn, dir] of dirBtns) {
+      btn?.addEventListener('click', () => this.setEscapeDir(dir));
+    }
+
+    this.dom.btnConvert.addEventListener('click', () => {
+      // 转义 tab 下「转换」按钮 = 反向执行一次（FR-I5：与顶部方向控件等价）
+      if (this.tab === 'escape') {
+        this.setEscapeDir(oppositeDir(this.escapeDir));
+        return;
+      }
+      this.run(this.in.getDoc());
+    });
+
+    // 格式化 tab：btnFormat = 严格/容错档位（FR-K2），btnCompact = 美化/压缩（FR-K4）
     this.dom.btnFormat.addEventListener('click', () => {
+      if (this.tab === 'format') {
+        this.toggleStrict();
+        return;
+      }
       this.compact = false;
-      this.persist();
+      void this.persist();
       this.run(this.in.getDoc());
     });
 
     this.dom.btnCompact.addEventListener('click', () => {
+      if (this.tab === 'format') {
+        this.toggleCompact();
+        return;
+      }
       this.compact = true;
-      this.persist();
+      void this.persist();
       this.run(this.in.getDoc());
     });
 
     this.dom.btnCopy.addEventListener('click', () => void this.handleCopy());
 
     this.dom.btnDownload.addEventListener('click', () => {
-      // AC-39：取自 state.output，不取 DOM
+      // AC-39：取自程序产物，不取 DOM
+      if (this.tab === 'escape') {
+        if (!this.escapeOutput) return;
+        downloadText(this.escapeOutput, 'java'); // java → .txt
+        return;
+      }
       if (!this.state?.output) return;
       downloadText(this.state.output, this.state.outputLang);
     });
@@ -199,6 +335,103 @@ export class AppController {
     });
   }
 
+  /** 切换 tab（FR-L1 / FR-L4 / FR-L3） */
+  switchTab(id: TabId): void {
+    if (id === this.tab) return;
+    this.tab = id;
+    // 换 tab 即作废「已确认剥离的前缀」——它是针对上一次输入的决定
+    this.strippedPrefix = '';
+    this.renderTabs();
+    this.syncTabControls();
+    void this.persist();
+    this.run(this.in.getDoc());
+  }
+
+  /** 渲染 tab 选中态（FR-L1 顺序固定，样式只切 aria-selected + class） */
+  private renderTabs(): void {
+    const map: Array<[HTMLElement | undefined, TabId]> = [
+      [this.dom.tabFormat, 'format'],
+      [this.dom.tabEscape, 'escape'],
+      [this.dom.tabConvert, 'convert'],
+    ];
+    for (const [btn, id] of map) {
+      if (!btn) continue;
+      const on = id === this.tab;
+      btn.classList.toggle('tab--on', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+    this.syncTabControls();
+  }
+
+  /**
+   * 按 tab 切换各控件的可见性。
+   * 格式化 tab 隐藏目标选择器（目标恒等于来源，FR-A19）；
+   * 转义 tab 隐藏来源/目标选择器（纯文本通道，无格式概念，FR-I1）。
+   */
+  private syncTabControls(): void {
+    const isEscape = this.tab === 'escape';
+    const isFormat = this.tab === 'format';
+    this.dom.fmtSelect.hidden = isEscape;
+    this.dom.resetAuto.hidden = isEscape || this.locked === null;
+    if (this.dom.targetSelect) this.dom.targetSelect.hidden = isEscape || isFormat;
+    if (this.dom.targetSelect && !isEscape && !isFormat) {
+      this.dom.targetSelect.value = this.target;
+    }
+    if (this.dom.escapeStyleSelect) {
+      this.dom.escapeStyleSelect.hidden = !isEscape;
+      this.dom.escapeStyleSelect.value = this.escapeStyle;
+    }
+    // FR-I5：方向二选一常驻显示，选中态一眼可见
+    if (this.dom.escapeDirSeg) this.dom.escapeDirSeg.hidden = !isEscape;
+    for (const [btn, dir] of [
+      [this.dom.escapeDirDecode, 'decode'],
+      [this.dom.escapeDirEncode, 'encode'],
+    ] as Array<[HTMLElement | undefined, EscapeDir]>) {
+      if (!btn) continue;
+      const on = dir === this.escapeDir;
+      btn.classList.toggle('seg__btn--on', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    // 转义 tab 用「反向：xxx」替代「转换」—— 文案明确说出会变成哪个方向
+    this.dom.btnConvert.textContent = isEscape
+      ? '反向：' + ESCAPE_DIR_LABEL[oppositeDir(this.escapeDir)]
+      : '转换';
+    this.dom.btnFormat.hidden = isEscape || !isFormat;
+    this.dom.btnCompact.hidden = isEscape || !isFormat;
+    if (isFormat) {
+      this.dom.btnFormat.textContent = this.strict ? '档位：严格' : '档位：容错';
+      this.dom.btnCompact.textContent = this.compact ? '缩进：压缩' : '缩进：美化';
+    }
+  }
+
+  /** FR-K2：格式化 tab 的严格/容错档位切换 */
+  toggleStrict(): void {
+    this.strict = !this.strict;
+    this.syncTabControls();
+    void this.persist();
+    this.run(this.in.getDoc());
+  }
+
+  /** FR-I5：切换转义方向（去除转义 ⇄ 增加转义） */
+  setEscapeDir(dir: EscapeDir): void {
+    if (dir === this.escapeDir) {
+      this.syncTabControls();
+      return;
+    }
+    this.escapeDir = dir;
+    this.syncTabControls();
+    void this.persist();
+    this.run(this.in.getDoc());
+  }
+
+  /** FR-K4 / O-12：格式化 tab 的美化/压缩切换 */
+  toggleCompact(): void {
+    this.compact = !this.compact;
+    this.syncTabControls();
+    void this.persist();
+    this.run(this.in.getDoc());
+  }
+
   /** 统一维护「手动锁定」状态与判定条标记（FR-B5/B7/B10） */
   private setLocked(v: SourceFormat | null): void {
     this.locked = v;
@@ -207,7 +440,13 @@ export class AppController {
   }
 
   private async persist(): Promise<void> {
-    await savePrefs({ compact: this.compact });
+    await savePrefs({
+      compact: this.compact,
+      tab: this.tab,
+      target: this.target,
+      strict: this.strict,
+      escapeDir: this.escapeDir,
+    });
   }
 
   private schedule(): void {
@@ -224,7 +463,7 @@ export class AppController {
     this.timer = window.setTimeout(() => this.run(text), delay);
   }
 
-  /** 执行一次完整转换 */
+  /** 执行一次处理：按当前 tab 分派到对应链路（FR-L1 / FR-L4） */
   run(text: string): void {
     if (text.trim() === '') {
       this.state = null;
@@ -239,11 +478,22 @@ export class AppController {
     this.in.setHighlight(highlightOn);
     this.out.setHighlight(highlightOn);
 
+    if (this.tab === 'escape') {
+      this.runEscape(text);
+      return;
+    }
+
+    // 格式化 tab：目标 = 来源（FR-A19 同语言规范化）+ 严格档（FR-K1）
+    // 转换 tab：目标由选择器决定 + 宽松档
+    const target: TargetFormat | 'auto' | 'same' = this.tab === 'format' ? 'same' : this.target;
     const result = convert(text, {
       force: this.locked,
       compact: this.compact,
       overrides: this.panel.overrides(),
       timeoutMs: 3000,
+      target,
+      strictOnly: this.tab === 'format' && this.strict,
+      strippedPrefix: this.strippedPrefix || undefined,
     });
 
     this.state = result;
@@ -267,6 +517,8 @@ export class AppController {
       if (e) this.in.highlightLine(e.line);
       this.setFixbar(null, result);
       this.renderSuggestion(text, result);
+      // FR-D13：疑似日志前缀 → 给一键剥离入口（只在报错时建议，绝不自动剥）
+      this.renderPrefixHint(result);
       return;
     }
 
@@ -296,9 +548,49 @@ export class AppController {
     }
 
     this.clearSuggestion();
+    this.clearPrefixHint();
 
     // 类型面板（FR-C11 / D-2）
     this.renderTypePanel(result);
+  }
+
+  /**
+   * 转义 tab 链路（FR-I1～I4）
+   *
+   * 【与转换链路的本质区别】这是**纯字符串**通道（文本 → 文本），
+   * 不经过 IR —— 绝不尝试解析输入结构。
+   */
+  private runEscape(text: string): void {
+    const res = escapeText(text, this.escapeStyle, this.escapeDir);
+    this.escapeOutput = res.output;
+    this.escapeError = res.error;
+
+    if (!res.ok) {
+      // FR-I3：失败不返回部分结果，保留旧输出置灰 + 禁用复制/下载
+      this.out.setDoc(this.lastGoodOutput);
+      this.dom.staleBadge.hidden = false;
+      this.dom.editorOut.classList.add('is-stale');
+      this.setButtons(false);
+      this.setStatus(res.error ?? '转义失败', 'error');
+      this.setFixbar(null, { duplicates: undefined } as unknown as ConvertResult);
+      this.clearSuggestion();
+      this.dom.typePanel.hidden = true;
+      this.updateStats(text, '');
+      return;
+    }
+
+    this.lastGoodOutput = res.output;
+    this.out.setDoc(res.output);
+    this.dom.staleBadge.hidden = true;
+    this.dom.editorOut.classList.remove('is-stale');
+    this.in.clearHighlight();
+    this.setButtons(true);
+    this.setFixbar(null, { duplicates: undefined } as unknown as ConvertResult);
+    // FR-I6：剥了外层引号必须说出来，让操作可追溯
+    this.setStatus(res.note ?? '');
+    this.clearSuggestion();
+    this.dom.typePanel.hidden = true;
+    this.updateStats(text, res.output);
   }
 
   private renderTypePanel(r: ConvertResult): void {
@@ -401,6 +693,49 @@ export class AppController {
     document.getElementById('suggestBox')?.remove();
   }
 
+  /**
+   * FR-D13：解析失败且疑似日志前缀 → 提供「剥离日志前缀后重试」一键入口。
+   *
+   * 只有用户点击才真的剥离；且剥离后必须显示被剥掉了什么（FR-D14），
+   * 否则剥离本身又变成另一种静默行为。
+   */
+  private renderPrefixHint(r: ConvertResult): void {
+    this.clearPrefixHint();
+    // 已经剥离过还失败 → 不再劝一次，避免死循环
+    if (!r.prefixHint || this.strippedPrefix) return;
+
+    const box = document.createElement('div');
+    box.className = 'suggest';
+    box.id = 'prefixHintBox';
+
+    const tip = document.createElement('span');
+    tip.className = 'suggest__tip';
+    tip.textContent = '这段开头像是日志前缀：';
+    box.appendChild(tip);
+
+    const code = document.createElement('code');
+    code.className = 'suggest__code';
+    code.textContent = clipHint(r.prefixHint.prefix);
+    code.title = r.prefixHint.prefix;
+    box.appendChild(code);
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn--ghost suggest__btn';
+    btn.type = 'button';
+    btn.textContent = '剥离后重试';
+    btn.addEventListener('click', () => {
+      this.strippedPrefix = r.prefixHint!.prefix;
+      this.run(this.in.getDoc());
+    });
+    box.appendChild(btn);
+
+    this.dom.statusMsg.parentElement?.insertBefore(box, this.dom.statusMsg);
+  }
+
+  private clearPrefixHint(): void {
+    document.getElementById('prefixHintBox')?.remove();
+  }
+
   private setButtons(enabled: boolean): void {
     // FR-E8：无有效输出时全部禁用；失败态仅「转换」可用（FR-D7）
     this.dom.btnCopy.disabled = !enabled;
@@ -408,7 +743,8 @@ export class AppController {
     this.dom.btnFormat.disabled = !enabled;
     this.dom.btnCompact.disabled = !enabled;
     this.dom.btnConvert.disabled = false;
-    this.dom.btnDownload.textContent = downloadLabel(this.lastGoodLang);
+    this.dom.btnDownload.textContent =
+      this.tab === 'escape' ? '下载 .txt' : downloadLabel(this.lastGoodLang);
   }
 
   private setStatus(msg: string, kind: 'info' | 'error' = 'info'): void {
@@ -437,8 +773,10 @@ export class AppController {
   }
 
   private async handleCopy(): Promise<void> {
-    if (!this.state?.output) return;
-    const res = await copyText(this.state.output);
+    // AC-39 精神：一律取程序产物，绝不取编辑器 DOM
+    const payload = this.tab === 'escape' ? this.escapeOutput : (this.state?.output ?? '');
+    if (!payload) return;
+    const res = await copyText(payload);
     if (res.ok) {
       const old = this.dom.btnCopy.textContent;
       this.dom.btnCopy.textContent = '✓ 已复制';
@@ -463,6 +801,12 @@ export class AppController {
       locked: this.locked !== null,
       compact: this.compact,
       overrides: [...this.panel.overrides().entries()],
+      // O-9：不带这三个，放大页会跳回默认 tab
+      tab: this.tab,
+      target: this.target,
+      strict: this.strict,
+      escapeStyle: this.escapeStyle,
+      escapeDir: this.escapeDir,
     });
     window.open(chrome.runtime.getURL('app.html'), '_blank');
   }
@@ -498,7 +842,33 @@ export class AppController {
   }
 
   get output(): string {
-    return this.state?.output ?? '';
+    return this.tab === 'escape' ? this.escapeOutput : (this.state?.output ?? '');
+  }
+
+  /** 当前 tab（FR-L1） */
+  get currentTab(): TabId {
+    return this.tab;
+  }
+
+  /** 程序化设置目标格式（FR-A17），供测试与放大页继承驱动 */
+  setTarget(t: TargetFormat | 'auto'): void {
+    this.target = t;
+    if (this.dom.targetSelect) this.dom.targetSelect.value = t;
+    this.run(this.in.getDoc());
+  }
+
+  /** 程序化设置转义风格与方向（FR-I2 / FR-I5），供测试驱动 */
+  setEscape(style: EscapeStyle, dir?: EscapeDir): void {
+    this.escapeStyle = style;
+    if (dir) this.escapeDir = dir;
+    if (this.dom.escapeStyleSelect) this.dom.escapeStyleSelect.value = style;
+    this.syncTabControls();
+    this.run(this.in.getDoc());
+  }
+
+  /** 当前转义方向（FR-I5），供测试与放大页继承校验 */
+  get currentEscapeDir(): EscapeDir {
+    return this.escapeDir;
   }
 }
 
@@ -533,6 +903,12 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   });
 }
 
+/** 剥离提示里的前缀片段截断，避免超长日志行撑爆布局 */
+function clipHint(s: string): string {
+  const one = s.replace(/\n/g, '\\n');
+  return one.length > 40 ? one.slice(0, 40) + '…' : one;
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] ?? c);
 }
@@ -540,6 +916,19 @@ function escapeHtml(s: string): string {
 /** SessionState 里的 source 是 string，需收窄为 SourceFormat */
 function isSourceFormat(v: string): v is SourceFormat {
   return v === 'json' || v === 'python' || v === 'java' || v === 'map';
+}
+
+/** 持久化值可能是任意字符串（旧版本/被篡改），必须收窄后再用 */
+function isTabId(v: string): v is TabId {
+  return (TAB_ORDER as string[]).includes(v);
+}
+
+function isTargetOpt(v: string): v is TargetFormat | 'auto' {
+  return v === 'auto' || v === 'json' || v === 'python' || v === 'java';
+}
+
+function isEscapeStyle(v: string): v is EscapeStyle {
+  return (ALL_ESCAPE_STYLES as string[]).includes(v);
 }
 
 export type { FormatSuggestion };

@@ -38,3 +38,17 @@ json_bare_key: ok  source=json lang=python fixes=2
 py_signed_nan: ok  source=python lang=json fixes=3
 py_boolkey: ok  source=python lang=json fixes=4
 map_space_val: ok  source=map lang=python fixes=0
+log_ts_info_obj: ok  source=json lang=python fixes=1
+log_ts_error_logger: ok  source=json lang=python fixes=1
+log_ts_warn_arr: ok  source=json lang=python fixes=1
+log_iso_debug: ok  source=json lang=python fixes=1
+log_thread_name: ok  source=json lang=python fixes=1
+log_level_only: ok  source=json lang=python fixes=1
+log_nested_obj: ok  source=json lang=python fixes=1
+log_py_body: ok  source=python lang=json fixes=1
+log_map_body: ok  source=map lang=python fixes=1
+log_java_body: ok  source=java lang=python fixes=3
+log_cjk_msg: ok  source=json lang=python fixes=1
+log_bracketed_ts: ok  source=json lang=python fixes=1
+neg_plain_obj: ok  source=json lang=python fixes=0
+neg_plain_arr: ok  source=json lang=python fixes=0

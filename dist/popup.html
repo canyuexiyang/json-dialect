@@ -4,12 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>JSON Dialect</title>
-    <script type="module" crossorigin src="/assets/popup-XmTzQgeZ.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/controller-CIw38rd8.js">
-    <link rel="stylesheet" crossorigin href="/assets/controller-l3kN7c_1.css">
+    <script type="module" crossorigin src="/assets/popup-D0YtTbwM.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/controller-CE7QSwFM.js">
+    <link rel="stylesheet" crossorigin href="/assets/controller-BMge_6f2.css">
   </head>
   <body>
     <div id="app" class="app">
+      <!-- ⓪ 功能 tab 条（FR-F2 六段 / FR-L1） -->
+      <nav class="tabbar" role="tablist" aria-label="功能">
+        <button class="tab" id="tabFormat" role="tab" type="button" data-tab="format" aria-selected="true">格式化</button>
+        <button class="tab" id="tabEscape" role="tab" type="button" data-tab="escape" aria-selected="false">转义</button>
+        <button class="tab" id="tabConvert" role="tab" type="button" data-tab="convert" aria-selected="false">转换</button>
+      </nav>
+
       <!-- ① 顶部判定条（FR-B9/B10） -->
       <header class="detectbar">
         <span class="detectbar__label" id="fmtLabel">标准 JSON</span>
@@ -21,6 +28,24 @@
           <option value="map">Map.toString()</option>
         </select>
         <button id="resetAuto" class="btn btn--ghost" hidden>重置为自动</button>
+        <span class="detectbar__arrow" id="arrowTo" aria-hidden="true">→</span>
+        <select id="targetSelect" class="detectbar__select" aria-label="目标格式">
+          <option value="auto">自动</option>
+          <option value="json">标准 JSON</option>
+          <option value="python">Python 字面量</option>
+          <option value="java">Java 转义字符串</option>
+        </select>
+        <select id="escapeStyleSelect" class="detectbar__select" aria-label="转义风格" hidden>
+          <option value="json">JSON 字符串</option>
+          <option value="java">Java 字符串</option>
+          <option value="url">URL 百分号</option>
+          <option value="base64">Base64</option>
+        </select>
+        <!-- FR-I5：方向是显式的二选一，常驻可见（不再藏进按钮翻转） -->
+        <div id="escapeDirSeg" class="seg" role="group" aria-label="转义方向" hidden>
+          <button class="seg__btn" id="escapeDirDecode" type="button" data-dir="decode" aria-pressed="false">去除转义</button>
+          <button class="seg__btn" id="escapeDirEncode" type="button" data-dir="encode" aria-pressed="true">增加转义</button>
+        </div>
         <button id="enlarge" class="btn btn--ghost" title="放大">放大</button>
       </header>
 

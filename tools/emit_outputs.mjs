@@ -15,7 +15,8 @@ const report = [];
 
 for (const item of manifest) {
   const text = fs.readFileSync(path.join(dir, item.file), 'utf8');
-  const r = convert(text);
+  // 日志类样本：需先剥离前缀才能解析（FR-D13），剥离动作会记入修正记录
+  const r = convert(text, item.strippedPrefix ? { strippedPrefix: item.strippedPrefix } : {});
   const ext = r.outputLang === 'json' ? 'json' : 'py';
   const outFile = item.file.replace('.in.txt', '.out.' + ext);
   fs.writeFileSync(path.join(dir, outFile), r.output, 'utf8');
