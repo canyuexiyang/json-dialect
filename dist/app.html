@@ -4,37 +4,54 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>JSON Dialect · 放大页</title>
-    <script type="module" crossorigin src="/assets/app-CLnGGEOf.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/controller-CE7QSwFM.js">
-    <link rel="stylesheet" crossorigin href="/assets/controller-BMge_6f2.css">
+    <script type="module" crossorigin src="/assets/app-BHgGy2lx.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/controller-n5uEJE70.js">
+    <link rel="stylesheet" crossorigin href="/assets/controller-BvZVAxuG.css">
   </head>
   <body class="app-page">
-    <div id="app" class="app app--large">
-      <!-- ⓪ 功能 tab 条（FR-F2 六段 / FR-L1） -->
-      <nav class="tabbar" role="tablist" aria-label="功能">
-        <button class="tab" id="tabFormat" role="tab" type="button" data-tab="format" aria-selected="true">格式化</button>
-        <button class="tab" id="tabEscape" role="tab" type="button" data-tab="escape" aria-selected="false">转义</button>
-        <button class="tab" id="tabConvert" role="tab" type="button" data-tab="convert" aria-selected="false">转换</button>
-      </nav>
+    <div id="app" class="app app--large is-booting" data-channel="format">
+      <!-- ⓪ 顶部条：铭牌 + 功能 tab（FR-F2 / FR-L1） -->
+      <div class="topbar">
+        <div class="brand">
+          <span class="brand__mark">JSON DIALECT</span>
+          <span class="brand__sub">Dialect Converter</span>
+        </div>
+
+        <nav class="tabbar" role="tablist" aria-label="功能">
+          <button class="tab tab--on" id="tabFormat" role="tab" type="button" data-tab="format" aria-selected="true">格式化</button>
+          <button class="tab" id="tabEscape" role="tab" type="button" data-tab="escape" aria-selected="false">转义</button>
+          <button class="tab" id="tabConvert" role="tab" type="button" data-tab="convert" aria-selected="false">转换</button>
+        </nav>
+
+        <span class="topbar__spacer"></span>
+      </div>
 
       <header class="detectbar">
-        <span class="detectbar__label" id="fmtLabel">标准 JSON</span>
+        <span class="detectbar__label" id="fmtLabel">
+          <span class="detectbar__led" aria-hidden="true"></span>
+          标准 JSON
+        </span>
         <span class="badge" id="lockBadge" hidden>手动锁定</span>
-        <select id="fmtSelect" class="detectbar__select" aria-label="来源格式">
+        <select id="fmtSelect" aria-label="来源格式">
           <option value="json">标准 JSON</option>
           <option value="python">Python 字面量</option>
           <option value="java">Java 转义字符串</option>
           <option value="map">Map.toString()</option>
         </select>
         <button id="resetAuto" class="btn btn--ghost" hidden>重置为自动</button>
-        <span class="detectbar__arrow" aria-hidden="true">→</span>
-        <select id="targetSelect" class="detectbar__select" aria-label="目标格式">
+        <span class="detectbar__arrow" aria-hidden="true">
+          <svg class="ico" viewBox="0 0 18 12" aria-hidden="true">
+            <path d="M1 6h14" />
+            <path d="M11.5 2.5 15.5 6l-4 3.5" />
+          </svg>
+        </span>
+        <select id="targetSelect" aria-label="目标格式">
           <option value="auto">自动</option>
           <option value="json">标准 JSON</option>
           <option value="python">Python 字面量</option>
           <option value="java">Java 转义字符串</option>
         </select>
-        <select id="escapeStyleSelect" class="detectbar__select" aria-label="转义风格" hidden>
+        <select id="escapeStyleSelect" aria-label="转义风格" hidden>
           <option value="json">JSON 字符串</option>
           <option value="java">Java 字符串</option>
           <option value="url">URL 百分号</option>
@@ -43,7 +60,7 @@
         <!-- FR-I5：方向是显式的二选一，常驻可见（不再藏进按钮翻转） -->
         <div id="escapeDirSeg" class="seg" role="group" aria-label="转义方向" hidden>
           <button class="seg__btn" id="escapeDirDecode" type="button" data-dir="decode" aria-pressed="false">去除转义</button>
-          <button class="seg__btn" id="escapeDirEncode" type="button" data-dir="encode" aria-pressed="true">增加转义</button>
+          <button class="seg__btn seg__btn--on" id="escapeDirEncode" type="button" data-dir="encode" aria-pressed="true">增加转义</button>
         </div>
       </header>
 
@@ -56,7 +73,7 @@
         <div id="fixbar" class="fixbar" hidden></div>
       </section>
 
-      <div id="splitter" class="splitter" role="separator" aria-orientation="horizontal"></div>
+      <div id="splitter" class="splitter" role="separator" aria-orientation="horizontal" tabindex="0" aria-label="拖动调整输入与输出的高度"></div>
 
       <section class="pane pane--out">
         <div class="pane__head">
@@ -69,13 +86,29 @@
       </section>
 
       <footer class="toolbar">
-        <span id="statusMsg" class="statusmsg"></span>
+        <span class="status">
+          <span class="status__led" id="statusLed" aria-hidden="true"></span>
+          <span id="statusMsg" class="statusmsg"></span>
+        </span>
         <div class="toolbar__actions">
           <button id="btnConvert" class="btn">转换</button>
           <button id="btnFormat" class="btn">格式化</button>
           <button id="btnCompact" class="btn">压缩</button>
-          <button id="btnCopy" class="btn btn--primary">复制</button>
-          <button id="btnDownload" class="btn">下载</button>
+          <button id="btnCopy" class="btn btn--primary">
+            <svg class="ico" viewBox="0 0 16 16" aria-hidden="true">
+              <rect x="5.5" y="5.5" width="8" height="8" rx="1" />
+              <path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1" />
+            </svg>
+            复制
+          </button>
+          <button id="btnDownload" class="btn">
+            <svg class="ico" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 2.5v7.5" />
+              <path d="M5 7.5 8 10.5l3-3" />
+              <path d="M3 12.5h10" />
+            </svg>
+            下载
+          </button>
         </div>
       </footer>
     </div>

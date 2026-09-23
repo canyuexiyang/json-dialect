@@ -12,6 +12,8 @@ function q<T extends HTMLElement>(id: string): T {
 
 async function main(): Promise<void> {
   const app = new AppController({
+    root: q('app'),
+    statusLed: q('statusLed'),
     fmtLabel: q('fmtLabel'),
     lockBadge: q('lockBadge'),
     fmtSelect: q<HTMLSelectElement>('fmtSelect'),

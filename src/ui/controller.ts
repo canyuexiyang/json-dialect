@@ -27,6 +27,7 @@ import { copyText, selectAllIn } from './clipboard.js';
 import { downloadText, downloadLabel } from './download.js';
 import { loadPrefs, savePrefs, writeSession, type Prefs } from './sessionState.js';
 import { createTypePanel, isOverrideType, type OverrideType } from './typeWidgets.js';
+import { decorateSelect, bindHiddenClose, type SelectHandle } from './select.js';
 
 export interface DomRefs {
   fmtLabel: HTMLElement;
@@ -34,6 +35,10 @@ export interface DomRefs {
   fmtSelect: HTMLSelectElement;
   resetAuto: HTMLButtonElement;
   enlarge?: HTMLButtonElement;
+  /** 应用根节点（v1.2：通道导轨随 tab 换色） */
+  root?: HTMLElement;
+  /** 状态灯（v1.2） */
+  statusLed?: HTMLElement;
   /** tab 条（FR-L1）：可选 —— 老测试挂载的无 tab DOM 也能跑 */
   tabFormat?: HTMLButtonElement;
   tabEscape?: HTMLButtonElement;
@@ -126,6 +131,10 @@ export class AppController {
   /** 转义 tab 的输出与错误（不走 ConvertResult） */
   private escapeOutput = '';
   private escapeError: string | undefined;
+  /** v1.2：可造型下拉的装饰句柄（保留以便销毁/降级） */
+  private selects: SelectHandle[] = [];
+  /** v1.2：入场动画只跑一次，动画结束后摘掉 class，避免影响后续交互 */
+  private booted = false;
 
   constructor(
     private dom: DomRefs,
@@ -192,6 +201,11 @@ export class AppController {
       dark: this.dark,
     });
 
+    // v1.2：把原生 select 升级为可造型下拉。
+    // 仍在同步段内 —— 它只操作 DOM，无 await；且失败必须静默降级，
+    // 绝不因此中断初始化（界面可用性 > 视觉一致性）。
+    this.decorateSelects();
+
     this.bindEvents();
     this.renderTabs();
     if (initialInput) this.run(initialInput);
@@ -202,6 +216,40 @@ export class AppController {
     if (inherited?.compact === undefined) {
       void this.applyPrefsWhenReady();
     }
+  }
+
+  /**
+   * v1.2：把三个原生 select 升级为「按键 + 自绘菜单」。
+   *
+   * 每一步都可能因 DOM 结构异常而失败，全部 try 包住：
+   * 装饰只是视觉增强，失败就用回原生 select —— 绝不让 UI 卡在半升级状态。
+   */
+  private decorateSelects(): void {
+    const jobs: Array<[HTMLSelectElement | undefined, string | undefined]> = [
+      [this.dom.fmtSelect, '来源'],
+      [this.dom.targetSelect, '目标'],
+      [this.dom.escapeStyleSelect, '风格'],
+    ];
+    for (const [sel, tag] of jobs) {
+      if (!sel) continue;
+      // 已装饰过就跳过（重复装饰会产生两套 DOM）
+      if (sel.classList.contains('sel__native')) continue;
+      try {
+        const h = decorateSelect(sel, tag);
+        bindHiddenClose(sel, h);
+        this.selects.push(h);
+      } catch {
+        // 静默降级：保留原生 select，功能完全不受影响
+      }
+    }
+  }
+
+  /**
+   * v1.2：按 tab 切换「通道导轨」颜色。
+   * 无 root 节点（老测试挂载的精简 DOM）时静默跳过。
+   */
+  private syncChannel(): void {
+    this.dom.root?.setAttribute('data-channel', this.tab);
   }
 
   /** 读取界面偏好；超时或失败都按默认值继续，不影响已就绪的 UI */
@@ -337,10 +385,15 @@ export class AppController {
 
   /** 切换 tab（FR-L1 / FR-L4 / FR-L3） */
   switchTab(id: TabId): void {
-    if (id === this.tab) return;
+    if (id === this.tab) {
+      // v1.2：重复点同一 tab 也要收起动画，避免残留
+      this.endBoot();
+      return;
+    }
     this.tab = id;
     // 换 tab 即作废「已确认剥离的前缀」——它是针对上一次输入的决定
     this.strippedPrefix = '';
+    this.endBoot();
     this.renderTabs();
     this.syncTabControls();
     void this.persist();
@@ -360,7 +413,17 @@ export class AppController {
       btn.classList.toggle('tab--on', on);
       btn.setAttribute('aria-selected', on ? 'true' : 'false');
     }
+    this.syncChannel();
     this.syncTabControls();
+  }
+
+  /** v1.2：入场动画播完即摘掉 class，避免它一直参与后续重排 */
+  private endBoot(): void {
+    if (this.booted) return;
+    this.booted = true;
+    const root = this.dom.root;
+    if (!root) return;
+    window.setTimeout(() => root.classList.remove('is-booting'), 700);
   }
 
   /**
@@ -477,6 +540,9 @@ export class AppController {
     const highlightOn = chars <= T1;
     this.in.setHighlight(highlightOn);
     this.out.setHighlight(highlightOn);
+
+    // v1.2：大文本时一并关掉装饰性动效（FR-G3/G4 精神：保住输入流畅度）
+    this.dom.root?.classList.toggle('is-lite', !highlightOn);
 
     if (this.tab === 'escape') {
       this.runEscape(text);
@@ -747,9 +813,19 @@ export class AppController {
       this.tab === 'escape' ? '下载 .txt' : downloadLabel(this.lastGoodLang);
   }
 
+  /**
+   * v1.2：状态灯 —— 让「成功 / 报错 / 待输入」不用读文字也能看见。
+   * 三态：无消息=灰（待机）、有消息=绿（就绪）、error=红（故障）。
+   */
   private setStatus(msg: string, kind: 'info' | 'error' = 'info'): void {
     this.dom.statusMsg.textContent = msg;
     this.dom.statusMsg.classList.toggle('statusmsg--error', kind === 'error');
+
+    const led = this.dom.statusLed;
+    if (led) {
+      led.classList.toggle('status__led--error', kind === 'error');
+      led.classList.toggle('status__led--ok', kind === 'info' && msg !== '');
+    }
   }
 
   private renderEmpty(): void {
@@ -780,8 +856,14 @@ export class AppController {
     if (res.ok) {
       const old = this.dom.btnCopy.textContent;
       this.dom.btnCopy.textContent = '✓ 已复制';
+      // v1.2：整键闪一下信号色 —— 原来只改文字，反馈太弱
+      this.dom.btnCopy.classList.remove('btn--flash');
+      // 强制回流以重启动画（连续复制两次时第二下也要闪）
+      void this.dom.btnCopy.offsetWidth;
+      this.dom.btnCopy.classList.add('btn--flash');
       setTimeout(() => {
         this.dom.btnCopy.textContent = old;
+        this.dom.btnCopy.classList.remove('btn--flash');
       }, 2000);
       this.setStatus(res.message);
     } else {

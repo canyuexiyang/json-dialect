@@ -1,57 +1,188 @@
 /* JSON Dialect —— 弹窗与放大页样式
-   FR-F1 设计基准 720×600；FR-F7 深浅色跟随系统 */
+ *
+ * v1.2 视觉方向：工业仪表面板（Industrial / utilitarian instrument panel）
+ * 把整个插件当作一台精密测量仪器来画，而不是又一个消费级卡片界面。
+ *
+ * 设计约束（不可违背）：
+ *   - FR-F1：弹窗基准 720×600，纵向空间紧张 —— 所有横向条带必须紧凑
+ *   - FR-F7：深浅色跟随系统
+ *   - AC-36/37：零网络请求 —— 字体一律本地内嵌 woff2，禁止任何 CDN @font-face
+ *
+ * 字体：Archivo（可变字重，机械感 grotesque）+ IBM Plex Mono（代码/读数）
+ * 中文无对应字形，退回 PingFang SC / Microsoft YaHei —— 这是唯一的系统字体依赖。
+ */
 
-:root {
-  --bg: #ffffff;
-  --bg-soft: #f6f7f9;
-  --border: #e3e6ea;
-  --text: #1f2328;
-  --text-dim: #6b7280;
-  --accent: #2563eb;
-  --accent-soft: #dbeafe;
-  --danger: #dc2626;
-  --warn: #b45309;
-  --warn-soft: #fef3c7;
-  --ok: #16a34a;
-  --radius: 6px;
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+/* ── 字体：本地内嵌（AC-36/37 零网络） ────────────────────────── */
+@font-face {
+  font-family: 'Archivo';
+  src: url('./fonts/archivo-var.woff2') format('woff2-variations');
+  font-weight: 500 700;
+  font-style: normal;
+  font-display: swap;
 }
 
-/* FR-F7：跟随系统深浅色偏好 */
+@font-face {
+  font-family: 'Plex Mono';
+  src: url('./fonts/plexmono-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Plex Mono';
+  src: url('./fonts/plexmono-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ── 设计令牌 ────────────────────────────────────────────────
+   三套主题：本体（浅）· 深 · 通道信号色。
+   通道信号色（--signal）按 tab 切换：格式化=铜绿 / 转义=氧化琥珀 / 转换=钢蓝，
+   让「我现在在哪条通道上」不用读文字也能看见。 */
+:root {
+  /* 表面：混凝土 / 纸 / 内嵌白 */
+  --bg: #e9e6df;
+  --bg-panel: #f7f5f0;
+  --bg-inset: #ffffff;
+  --bg-recess: #e4e0d8;
+  --border: #d3cec4;
+  --border-strong: #b8b1a4;
+
+  /* 墨色 */
+  --text: #1a1c21;
+  --text-dim: #6d6a63;
+  --text-faint: #97938b;
+
+  /* 通道信号 + 语义色 */
+  --signal: #0e6f68;
+  --signal-soft: #d6e5e2;
+  --signal-ink: #ffffff;
+  --warn: #8a5a00;
+  --warn-soft: #f6e7c4;
+  --danger: #a8231b;
+  --danger-soft: #f6ddd6;
+  --ok: #1f6b3b;
+
+  /* 几何：仪器面板用小圆角（2px）+ 硬边，拒绝消费级软糖圆角 */
+  --radius: 2px;
+  --radius-lg: 3px;
+  --rule: 1px;
+
+  /* 阴影：极浅、贴近表面，营造"嵌进面板"而不是"浮在纸上" */
+  --lift: 0 1px 0 rgba(26, 28, 33, 0.06);
+  --inset-shadow: inset 0 1px 2px rgba(26, 28, 33, 0.08);
+  --pop-shadow: 0 6px 18px -6px rgba(26, 28, 33, 0.28), 0 1px 0 rgba(26, 28, 33, 0.08);
+
+  /* 字体 */
+  --font: 'Archivo', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --mono: 'Plex Mono', 'PingFang SC', monospace;
+
+  /* 节奏：8px 网格的半步（4px）便于在 600px 高度里精打细算 */
+  --u: 4px;
+}
+
+/* FR-F7：跟随系统深色 */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1a1c1f;
-    --bg-soft: #232629;
-    --border: #34383d;
-    --text: #e6e8eb;
+    --bg: #17191c;
+    --bg-panel: #1d2024;
+    --bg-inset: #121417;
+    --bg-recess: #0e1013;
+    --border: #2e3238;
+    --border-strong: #454b53;
+
+    --text: #e8eaed;
     --text-dim: #9aa1a9;
-    --accent: #60a5fa;
-    --accent-soft: #1e3a5f;
-    --danger: #f87171;
-    --warn: #fbbf24;
-    --warn-soft: #3d3016;
-    --ok: #4ade80;
+    --text-faint: #6b727a;
+
+    --signal: #35c9b8;
+    --signal-soft: #14302e;
+    --signal-ink: #0a1512;
+    --warn: #e0b341;
+    --warn-soft: #33290f;
+    --danger: #f0837a;
+    --danger-soft: #331714;
+    --ok: #63c98c;
+
+    --lift: 0 1px 0 rgba(0, 0, 0, 0.4);
+    --inset-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+    --pop-shadow: 0 8px 22px -6px rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255, 255, 255, 0.04);
   }
 }
 
 body.theme-dark {
-  --bg: #1a1c1f;
-  --bg-soft: #232629;
-  --border: #34383d;
-  --text: #e6e8eb;
+  --bg: #17191c;
+  --bg-panel: #1d2024;
+  --bg-inset: #121417;
+  --bg-recess: #0e1013;
+  --border: #2e3238;
+  --border-strong: #454b53;
+
+  --text: #e8eaed;
   --text-dim: #9aa1a9;
-  --accent: #60a5fa;
-  --accent-soft: #1e3a5f;
-  --danger: #f87171;
-  --warn: #fbbf24;
-  --warn-soft: #3d3016;
-  --ok: #4ade80;
+  --text-faint: #6b727a;
+
+  --signal: #35c9b8;
+  --signal-soft: #14302e;
+  --signal-ink: #0a1512;
+  --warn: #e0b341;
+  --warn-soft: #33290f;
+  --danger: #f0837a;
+  --danger-soft: #331714;
+  --ok: #63c98c;
+
+  --lift: 0 1px 0 rgba(0, 0, 0, 0.4);
+  --inset-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+  --pop-shadow: 0 8px 22px -6px rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ── 通道信号色：按 tab 重染整台"仪器" ────────────────────────
+   格式化 = 铜绿（解析/校验，冷静）· 转义 = 氧化琥珀（编码，警示）
+   转换 = 钢蓝（跨语言搬运，中性） */
+.app[data-channel='format'] {
+  --signal: #0e6f68;
+  --signal-soft: #d6e5e2;
+  --signal-ink: #ffffff;
+}
+.app[data-channel='escape'] {
+  --signal: #b8501a;
+  --signal-soft: #f7e2d5;
+  --signal-ink: #ffffff;
+}
+.app[data-channel='convert'] {
+  --signal: #35506b;
+  --signal-soft: #dde5ee;
+  --signal-ink: #ffffff;
+}
+
+body.theme-dark .app[data-channel='format'] {
+  --signal: #35c9b8;
+  --signal-soft: #14302e;
+  --signal-ink: #0a1512;
+}
+body.theme-dark .app[data-channel='escape'] {
+  --signal: #f08a4b;
+  --signal-soft: #33200f;
+  --signal-ink: #1a0f05;
+}
+body.theme-dark .app[data-channel='convert'] {
+  --signal: #8fb4d6;
+  --signal-soft: #16222e;
+  --signal-ink: #08121a;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* 【关键】显式 display 会盖掉浏览器默认的 [hidden]{display:none}。
+   .sel / .seg / .badge 都设了 display:inline-flex，一旦被 hidden
+   仍会占位 —— 判定条上会留下一段空白缺口。
+   这一条必须放在所有组件规则之前，且优先级要够（[hidden] 属性选择器）。 */
+[hidden] {
+  display: none !important;
 }
 
 html,
@@ -60,16 +191,24 @@ body {
   padding: 0;
   font-family: var(--font);
   font-size: 13px;
+  font-weight: 500;
   color: var(--text);
   background: var(--bg);
+  -webkit-font-smoothing: antialiased;
 }
 
+/* ── 骨架 ──────────────────────────────────────────────────
+   左侧 3px「通道导轨」是整台仪器的状态灯带，颜色随 tab 变。 */
 .app {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 720px;
   height: 600px;
   overflow: hidden;
+  background: var(--bg);
+  border-left: 3px solid var(--signal);
+  transition: border-left-color 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .app--large {
@@ -77,44 +216,527 @@ body {
   height: 100vh;
 }
 
-/* ① 顶部判定条 */
+/* 面板四角的技术刻度（仪器铭牌感），不拦截交互 */
+.app::before,
+.app::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-color: var(--border-strong);
+  border-style: solid;
+  border-width: 0;
+  pointer-events: none;
+  opacity: 0.7;
+}
+.app::before {
+  top: 5px;
+  border-top-width: 1px;
+  border-right-width: 1px;
+}
+.app::after {
+  bottom: 5px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+
+/* ──  顶部条：铭牌 + 功能 tab ─────────────────────────────
+   左重右轻，绝不居中：铭牌居左，tab 靠左续排，放大按钮钉死右侧。 */
+.topbar {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  background: var(--bg-panel);
+  border-bottom: var(--rule) solid var(--border);
+  box-shadow: var(--lift);
+}
+
+/* 铭牌：仪器型号 */
+.brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 12px 0 10px;
+  flex: 0 0 auto;
+  border-right: var(--rule) solid var(--border);
+}
+
+.brand__mark {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.brand__sub {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  line-height: 1.1;
+}
+
+/* ── 功能 tab 条（FR-F2 / FR-L1） ──────────────────────────
+   选中态 = 底部 2px 信号色实心条 + 文字提亮，不用整块填充（省纵向空间）。 */
+.tabbar {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 1px;
+  padding: 0 6px;
+  align-items: stretch;
+}
+
+.tab {
+  position: relative;
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 13px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.tab:hover:not(.tab--on) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--signal) 8%, transparent);
+}
+
+.tab--on {
+  color: var(--signal);
+  font-weight: 700;
+}
+
+/* 选中指示条：贴底实心，宽度随内容，视觉上像仪表档位指针 */
+.tab--on::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 2px;
+  background: var(--signal);
+  animation: tab-snap 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes tab-snap {
+  from {
+    transform: scaleX(0.35);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: -3px;
+}
+
+.topbar__spacer {
+  flex: 1 1 auto;
+}
+
+/* 放大按钮：钉在右上角，做成仪器上的小方键 */
+.topbar__tool {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  border-left: var(--rule) solid var(--border);
+}
+
+/* ── 通用按钮 ──────────────────────────────────────────────
+   硬边 + 1px 描边 + 按下时"下压 1px"，像机械按键而非浮动卡片。 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font: inherit;
+  font-weight: 600;
+  height: 26px;
+  padding: 0 11px;
+  border: var(--rule) solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: var(--lift);
+  transition: transform 0.08s, border-color 0.14s, background 0.14s, color 0.14s;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+/* 机械按键的下压感 */
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+  background: var(--bg-recess);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn--primary {
+  background: var(--signal);
+  border-color: var(--signal);
+  color: var(--signal-ink);
+  height: 28px;
+  padding: 0 14px;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--signal);
+  border-color: var(--signal);
+  color: var(--signal-ink);
+  filter: brightness(1.08);
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text-dim);
+  height: 22px;
+  padding: 0 7px;
+  font-size: 12px;
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--signal) 10%, transparent);
+  border-color: transparent;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+}
+
+/* 图标（内联 SVG，不用 emoji —— 保证专业一致） */
+.ico {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 复制成功的瞬时反馈：原来只改文字，现在整键闪一下信号色 */
+.btn--flash {
+  animation: btn-flash 0.42s ease-out;
+}
+
+@keyframes btn-flash {
+  0% {
+    background: var(--signal);
+    border-color: var(--signal);
+    color: var(--signal-ink);
+  }
+  100% {
+    background: var(--bg-inset);
+    border-color: var(--border-strong);
+    color: var(--text);
+  }
+}
+
+/* ── ① 判定条：来源 ▸ 目标 ────────────────────────────────
+   用一条渐宽的细线把「从哪来」和「到哪去」串起来，方向性一眼可见。 */
 .detectbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-soft);
+  gap: 7px;
   flex: 0 0 auto;
+  min-height: 36px;
+  padding: 5px 10px;
+  background: var(--bg-panel);
+  border-bottom: var(--rule) solid var(--border);
 }
 
 .detectbar__label {
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
 }
 
-.detectbar__select {
-  font: inherit;
-  padding: 3px 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--text);
+/* LED 状态灯：判定成功=信号色常亮，锁定=琥珀 */
+.detectbar__led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 22%, transparent);
+  flex: 0 0 auto;
 }
 
 .badge {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
   padding: 2px 6px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+  color: var(--warn);
+  border: var(--rule) solid color-mix(in srgb, var(--warn) 35%, transparent);
+  white-space: nowrap;
 }
 
 .badge--stale {
-  background: var(--warn-soft);
-  color: var(--warn);
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
 }
 
-/* ②③ 输入/输出区 */
+/* 方向箭头：细线 + 箭头，不是字符箭头（避免字体降级时变样） */
+.detectbar__arrow {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--signal);
+  padding: 0 1px;
+}
+
+.detectbar__arrow .ico {
+  width: 16px;
+  height: 12px;
+}
+
+/* ── 下拉框：原生 select 无法充分造型，改用「按键 + 自绘菜单」 ─
+   .sel 是触发器（按键样），.sel__menu 是浮层菜单。
+   触发器与菜单共用同一套 tokens，深浅色自动跟随。 */
+.sel {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.sel__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 12px;
+  height: 26px;
+  padding: 0 8px 0 9px;
+  border: var(--rule) solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: var(--lift);
+  transition: border-color 0.14s, background 0.14s, color 0.14s;
+}
+
+.sel__trigger:hover {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+.sel__trigger:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+}
+
+/* 触发器上的小标签：说明这个下拉选的是什么 */
+.sel__tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.sel--on .sel__trigger {
+  border-color: var(--signal);
+  background: color-mix(in srgb, var(--signal) 9%, var(--bg-inset));
+}
+
+.sel__caret {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.65;
+  transition: transform 0.18s cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+
+.sel--on .sel__caret {
+  transform: rotate(180deg);
+}
+
+/* 浮层菜单：绝对定位，弹出时有 6px 位移 + 淡入 */
+.sel__menu {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  min-width: 100%;
+  z-index: 40;
+  padding: 3px;
+  margin: 0;
+  list-style: none;
+  background: var(--bg-panel);
+  border: var(--rule) solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--pop-shadow);
+  animation: menu-in 0.16s cubic-bezier(0.34, 1.3, 0.64, 1);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sel__menu[hidden] {
+  display: none;
+}
+
+.sel__opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px 5px 7px;
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sel__opt:hover {
+  background: color-mix(in srgb, var(--signal) 12%, transparent);
+}
+
+/* 选中项：左侧一小段信号色刻度，不用整行染色（更克制） */
+.sel__opt[aria-selected='true'] {
+  font-weight: 700;
+  color: var(--signal);
+}
+
+.sel__opt[aria-selected='true']::before {
+  content: '';
+  width: 3px;
+  height: 13px;
+  flex: 0 0 auto;
+  background: var(--signal);
+  border-radius: 1px;
+}
+
+.sel__opt:not([aria-selected='true'])::before {
+  content: '';
+  width: 3px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+/* 屏幕外隐藏的真实 select —— 保留给测试与无障碍，视觉上不占位 */
+.sel__native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── 转义方向二选一（FR-I5） ────────────────────────────────
+   做成仪器上的双向拨杆：两段连体，选中段信号色实心。 */
+.seg {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border: var(--rule) solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-inset);
+  box-shadow: var(--lift);
+}
+
+.seg__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.14s, background 0.14s;
+}
+
+.seg__btn + .seg__btn {
+  border-left: var(--rule) solid var(--border);
+}
+
+.seg__btn:hover:not(.seg__btn--on) {
+  color: var(--signal);
+  background: color-mix(in srgb, var(--signal) 10%, transparent);
+}
+
+.seg__btn--on {
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-weight: 700;
+}
+
+.seg__btn:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: -2px;
+}
+
+/* ── ②③ 输入 / 输出区 ─────────────────────────────────────
+   刻意不对等：输入是抬起的「工作台面」，输出是凹进的「读数窗」。 */
 .pane {
   display: flex;
   flex-direction: column;
@@ -123,24 +745,52 @@ body {
   overflow: hidden;
 }
 
+/* 工作台面：抬起、高亮底 */
+.pane--in {
+  background: var(--bg-inset);
+}
+
+/* 读数窗：凹进、低亮底 + 内阴影 */
+.pane--out {
+  background: var(--bg-recess);
+  box-shadow: var(--inset-shadow);
+}
+
 .pane__head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 12px;
-  font-size: 12px;
+  gap: 7px;
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  font-size: 11px;
   color: var(--text-dim);
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--rule) solid var(--border);
+  background: var(--bg-panel);
+  min-height: 24px;
 }
 
 .pane__title {
-  font-weight: 600;
-  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
 }
 
+/* 读数：等宽 + 数字等宽，像仪表数码管 */
 .stats {
   margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+  white-space: nowrap;
 }
 
 .editor {
@@ -156,41 +806,86 @@ body {
   height: 100%;
 }
 
+/* 输出过期：整体压暗 + 去色，像被断电的读数窗 */
 .editor--out.is-stale {
-  opacity: 0.45;
-  filter: grayscale(0.6);
+  opacity: 0.4;
+  filter: grayscale(0.75);
+  transition: opacity 0.18s, filter 0.18s;
 }
 
-/* 分隔条（FR-F8） */
+/* ── ③ 分隔条（FR-F8） ─────────────────────────────────────
+   中间有抓握纹（三点），暗示可拖动。 */
 .splitter {
-  flex: 0 0 5px;
+  position: relative;
+  flex: 0 0 6px;
   cursor: row-resize;
-  background: var(--border);
-}
-.splitter:hover {
-  background: var(--accent);
+  background: var(--bg-panel);
+  border-top: var(--rule) solid var(--border);
+  border-bottom: var(--rule) solid var(--border);
 }
 
-/* 修正提示条 */
+.splitter::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 2px;
+  transform: translate(-50%, -50%);
+  border-top: var(--rule) solid var(--border-strong);
+  border-bottom: var(--rule) solid var(--border-strong);
+  transition: border-color 0.14s;
+}
+
+.splitter:hover::after,
+.splitter.is-dragging::after {
+  border-color: var(--signal);
+}
+
+.splitter:hover {
+  background: color-mix(in srgb, var(--signal) 10%, var(--bg-panel));
+}
+
+/* ── 修正提示条 ────────────────────────────────────────────
+   左缘 3px 警示条，像告警灯带；点击展开明细。 */
 .fixbar {
   flex: 0 0 auto;
-  padding: 6px 12px;
+  padding: 5px 10px;
   font-size: 12px;
   background: var(--warn-soft);
   color: var(--warn);
-  border-top: 1px solid var(--border);
+  border-top: var(--rule) solid var(--border);
+  border-left: 3px solid var(--warn);
   cursor: pointer;
-  max-height: 130px;
+  max-height: 132px;
   overflow: auto;
+  animation: bar-in 0.2s ease-out;
+}
+
+@keyframes bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .fixbar--warn {
   font-weight: 700;
 }
 
+.fixbar__summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .fixbar__caret {
   display: inline-block;
-  transition: transform 0.15s;
+  transition: transform 0.18s cubic-bezier(0.34, 1.3, 0.64, 1);
 }
 
 .fixbar--open .fixbar__caret {
@@ -202,35 +897,55 @@ body {
   margin: 6px 0 0;
   font-family: var(--mono);
   font-size: 11px;
+  line-height: 1.55;
   white-space: pre-wrap;
   color: var(--text);
+  animation: detail-in 0.18s ease-out;
+}
+
+@keyframes detail-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .fixbar--open .fixbar__detail {
   display: block;
 }
 
-/* 类型调整面板（FR-C11） */
+/* ── 类型调整面板（FR-C11） ─────────────────────────────── */
 .typepanel {
   flex: 0 0 auto;
   max-height: 150px;
   overflow: auto;
-  padding: 6px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-soft);
+  padding: 6px 10px;
+  border-top: var(--rule) solid var(--border);
+  background: var(--bg-panel);
 }
 
 .typepanel__head {
-  font-weight: 600;
-  font-size: 12px;
-  margin-bottom: 4px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 5px;
 }
 
 .typepanel__row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 0;
+  padding: 3px 0;
+  border-bottom: var(--rule) solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.typepanel__row:last-of-type {
+  border-bottom: none;
 }
 
 .typepanel__path {
@@ -238,81 +953,93 @@ body {
   font-size: 11px;
   color: var(--text-dim);
   min-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.typedrop {
-  font: inherit;
-  font-size: 11px;
-  padding: 2px 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--text);
+/* 面板内的类型下拉沿用 .sel 组件，但更紧凑 */
+.typepanel .sel__trigger {
+  height: 22px;
+  font-size: 11.5px;
 }
 
-/* ⑤ 底部操作栏 */
+/* ── ⑤ 底部操作栏 ─────────────────────────────────────────
+   状态居左（配 LED），动作钉右，主 action 与其他按钮之间用间距分组。 */
 .toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-soft);
   flex: 0 0 auto;
+  padding: 7px 10px;
+  border-top: var(--rule) solid var(--border);
+  background: var(--bg-panel);
+  box-shadow: 0 -1px 0 rgba(26, 28, 33, 0.04);
 }
 
 .toolbar__actions {
   margin-left: auto;
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 
-.btn {
-  font: inherit;
-  padding: 5px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--text);
-  cursor: pointer;
+/* 主 action 与其他动作之间留一组间距 */
+.toolbar__actions .btn--primary {
+  margin-left: 4px;
 }
 
-.btn:hover:not(:disabled) {
-  border-color: var(--accent);
+/* 状态区：LED + 文本 */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
-.btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+.status__led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--text-faint);
+  transition: background 0.2s, box-shadow 0.2s;
 }
 
-.btn--primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+.status__led--ok {
+  background: var(--ok);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 20%, transparent);
 }
 
-.btn--ghost {
-  background: transparent;
-  font-size: 12px;
-  padding: 3px 8px;
+.status__led--error {
+  background: var(--danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 20%, transparent);
 }
 
 .statusmsg {
   font-size: 12px;
   color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .statusmsg--error {
   color: var(--danger);
+  font-weight: 600;
 }
 
-/* FR-D10：解析失败时的来源格式切换建议 */
+/* FR-D10 / FR-D13：解析失败时的建议条 */
 .suggest {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  padding: 5px 10px;
+  flex: 0 0 auto;
+  border-top: var(--rule) solid var(--border);
+  background: var(--bg-panel);
+  animation: bar-in 0.2s ease-out;
 }
 
 .suggest__tip {
@@ -321,17 +1048,34 @@ body {
 }
 
 .suggest__btn {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--signal);
+  color: var(--signal);
 }
 
 .suggest__btn:hover:not(:disabled) {
-  background: var(--accent-soft);
+  background: var(--signal-soft);
 }
 
-/* 错误行高亮（M2-2）：由 CodeMirror StateField 装饰驱动，不直操作 DOM */
+.suggest__code {
+  display: inline-block;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  background: var(--bg-recess);
+  border: var(--rule) solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  box-shadow: var(--inset-shadow);
+}
+
+/* ── 错误行高亮（M2-2）：由 CodeMirror StateField 装饰驱动 ── */
 .cm-line.cm-errorLine {
-  background: rgba(220, 38, 38, 0.14);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   border-left: 2px solid var(--danger);
 }
 
@@ -352,128 +1096,97 @@ body {
 }
 
 body.theme-dark .cm-line.cm-errorLine {
-  background: rgba(248, 113, 113, 0.16);
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
 }
 
-/* ── 功能 tab 条（FR-F2 六段 / FR-L1） ──────────────────────────
-   弹窗形态下必须紧凑：720×600 纵向空间紧张，tab 高度 ≤ 32px（FR-F2）。 */
-.tabbar {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 2px;
-  padding: 4px 8px 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
+/* ── 入场动画：整台仪器"通电" ──────────────────────────────
+   一次性错峰淡入，只在首次渲染时跑，不干扰后续交互。 */
+.app.is-booting .topbar {
+  animation: boot-in 0.34s ease-out both;
+}
+.app.is-booting .detectbar {
+  animation: boot-in 0.34s ease-out 0.05s both;
+}
+.app.is-booting .pane--in {
+  animation: boot-in 0.34s ease-out 0.1s both;
+}
+.app.is-booting .pane--out {
+  animation: boot-in 0.34s ease-out 0.15s both;
+}
+.app.is-booting .toolbar {
+  animation: boot-in 0.34s ease-out 0.2s both;
 }
 
-.tab {
-  flex: 1 1 0;
-  height: 28px;
-  padding: 0 10px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-  border-radius: 4px 4px 0 0;
-  transition: color 0.12s, background 0.12s;
+@keyframes boot-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.tab:hover:not(.tab--on) {
-  color: var(--text);
-  background: var(--accent-soft);
-}
-
-.tab--on {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
-  background: var(--bg);
-}
-
-.tab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-/* 放大页空间充裕，tab 可以舒展些 */
-.app--large .tabbar {
-  padding: 6px 12px 0;
-}
-
+/* ── 放大页：空间充裕，各条带舒展一档 ────────────────────── */
 .app--large .tab {
-  height: 34px;
+  height: 46px;
+  font-size: 14px;
+  padding: 0 18px;
+}
+
+.app--large .brand {
+  padding: 0 18px 0 16px;
+}
+
+.app--large .brand__mark {
   font-size: 14px;
 }
 
-/* ── 目标选择器（FR-A17 / O-6：来源 → 目标 对称） ────────────── */
-.detectbar__arrow {
-  color: var(--text-dim);
-  font-size: 13px;
-  padding: 0 2px;
-  user-select: none;
+.app--large .brand__sub {
+  font-size: 10px;
 }
 
-/* ── 转义方向二选一（FR-I5） ─────────────────────────────────
-   与 tab 同高（28px），放在判定条内；选中态用 accent 实心，
-   保证「我现在是去除还是增加」一眼可见，不必去看底部按钮文案。 */
-.seg {
-  display: inline-flex;
-  flex: 0 0 auto;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  overflow: hidden;
-  background: var(--bg-elevated);
+.app--large .detectbar {
+  min-height: 42px;
+  padding: 6px 14px;
+  gap: 9px;
 }
 
-.seg__btn {
-  height: 26px;
-  padding: 0 10px;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.12s, background 0.12s;
+.app--large .pane__head {
+  padding: 5px 14px;
+  min-height: 28px;
 }
 
-.seg__btn + .seg__btn {
-  border-left: 1px solid var(--border);
+.app--large .toolbar {
+  padding: 9px 14px;
 }
 
-.seg__btn:hover:not(.seg__btn--on) {
-  color: var(--text);
-  background: var(--accent-soft);
+.app--large .btn {
+  height: 29px;
+  padding: 0 14px;
 }
 
-.seg__btn--on {
-  background: var(--accent);
-  color: #fff;
-  font-weight: 600;
+.app--large .btn--primary {
+  height: 31px;
+  padding: 0 17px;
 }
 
-.seg__btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+/* ── 动效降级：尊重系统「减弱动态效果」 ──────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
-/* ── 日志前缀剥离提示（FR-D13/D14） ─────────────────────────── */
-.suggest__code {
-  display: inline-block;
-  max-width: 46%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: bottom;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+/* 大文本降级时（FR-G3/G4）关闭装饰性动效，保住输入流畅度 */
+.app.is-lite .tab--on::after,
+.app.is-lite .sel__menu,
+.app.is-lite .fixbar,
+.app.is-lite .suggest {
+  animation: none;
 }

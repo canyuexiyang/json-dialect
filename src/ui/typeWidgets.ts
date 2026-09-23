@@ -9,6 +9,7 @@
 
 import type { ConvertResult } from '../core/index.js';
 import type { ValueSlot } from '../core/index.js';
+import { decorateSelect } from './select.js';
 
 export type OverrideType = 'string' | 'number' | 'boolean' | 'null';
 
@@ -95,6 +96,17 @@ export function createTypePanel(): TypePanelHandle {
         list.appendChild(row);
       }
       host.appendChild(list);
+
+      // v1.2：把面板内的原生 select 升级为可造型下拉。
+      // 必须在 row 已入 DOM 之后（decorateSelect 需要 parentNode），
+      // 且失败静默降级 —— 原生 select 本身功能完整。
+      for (const sel of Array.from(list.querySelectorAll('select.typedrop'))) {
+        try {
+          decorateSelect(sel as HTMLSelectElement);
+        } catch {
+          /* 静默降级 */
+        }
+      }
 
       const clear = document.createElement('button');
       clear.className = 'btn btn--ghost';

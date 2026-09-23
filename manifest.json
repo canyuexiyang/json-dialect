@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JSON Dialect",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Python 字面量与 Java/标准 JSON 双向转换，纯本地、容错优先",
   "permissions": [
     "storage"
