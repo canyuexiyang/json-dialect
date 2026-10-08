@@ -189,6 +189,8 @@ html,
 body {
   margin: 0;
   padding: 0;
+  width: 100%;
+  height: 100%;
   font-family: var(--font);
   font-size: 13px;
   font-weight: 500;
@@ -198,13 +200,18 @@ body {
 }
 
 /* ── 骨架 ──────────────────────────────────────────────────
-   左侧 3px「通道导轨」是整台仪器的状态灯带，颜色随 tab 变。 */
+   左侧 3px「通道导轨」是整台仪器的状态灯带，颜色随 tab 变。
+
+   v1.3：宽度改为 100%（去死宽 720px）。侧边栏物理最窄 320px
+   （Chromium kSidePanelMinWidth），写死 720px 会直接溢出并被
+   overflow:hidden 裁掉放大按钮 —— 用户将无法进入标签页形态。 */
 .app {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: 720px;
-  height: 600px;
+  width: 100%;
+  min-width: 0;
+  height: 100vh;
   overflow: hidden;
   background: var(--bg);
   border-left: 3px solid var(--signal);
@@ -247,6 +254,8 @@ body {
   display: flex;
   align-items: stretch;
   flex: 0 0 auto;
+  /* v1.3：320px 下最坏宽度 395px，必须允许换行而非溢出被裁 */
+  flex-wrap: wrap;
   background: var(--bg-panel);
   border-bottom: var(--rule) solid var(--border);
   box-shadow: var(--lift);
@@ -259,7 +268,8 @@ body {
   justify-content: center;
   gap: 1px;
   padding: 0 12px 0 10px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   border-right: var(--rule) solid var(--border);
 }
 
@@ -285,7 +295,8 @@ body {
    选中态 = 底部 2px 信号色实心条 + 文字提亮，不用整块填充（省纵向空间）。 */
 .tabbar {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   gap: 1px;
   padding: 0 6px;
   align-items: stretch;
@@ -293,7 +304,8 @@ body {
 
 .tab {
   position: relative;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   height: 40px;
   padding: 0 13px;
   border: none;
@@ -354,6 +366,7 @@ body {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
+  margin-left: auto;
   padding: 0 10px;
   border-left: var(--rule) solid var(--border);
 }
@@ -469,6 +482,9 @@ body {
   align-items: center;
   gap: 7px;
   flex: 0 0 auto;
+  /* v1.3：转义 tab 判定条最坏宽度远超 320px，必须允许换行 */
+  flex-wrap: wrap;
+  row-gap: 5px;
   min-height: 36px;
   padding: 5px 10px;
   background: var(--bg-panel);
@@ -741,7 +757,9 @@ body {
   display: flex;
   flex-direction: column;
   flex: 1 1 0;
-  min-height: 0;
+  /* v1.3：min-height:0 会让 flex:1 1 0 被压到 0 —— 窄侧边栏下高度紧张时
+     输入区可能整个消失，用户连撤销都够不到。这里给硬底。 */
+  min-height: 72px;
   overflow: hidden;
 }
 
@@ -965,12 +983,15 @@ body {
 }
 
 /* ── ⑤ 底部操作栏 ─────────────────────────────────────────
-   状态居左（配 LED），动作钉右，主 action 与其他按钮之间用间距分组。 */
+   状态居左（配 LED），动作钉右，主 action 与其他按钮之间用间距分组。
+   v1.3：320px 下最坏 ≈520px，必须允许换行 —— 否则「复制」「下载」被裁掉。 */
 .toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
+  row-gap: 6px;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   padding: 7px 10px;
   border-top: var(--rule) solid var(--border);
   background: var(--bg-panel);
@@ -981,6 +1002,8 @@ body {
   margin-left: auto;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  row-gap: 6px;
   gap: 6px;
 }
 
@@ -1170,6 +1193,139 @@ body.theme-dark .cm-line.cm-errorLine {
 .app--large .btn--primary {
   height: 31px;
   padding: 0 17px;
+}
+
+/* ── 宽度引导条（v1.3.1） ──────────────────────────────────
+   存在的唯一原因：Chrome 侧边栏宽度**没有 API**（默认约 360px、
+   最小硬底约 320px，只能用户拖边缘），扩展改不了也自适应不了。
+   那就把限制说清楚并给出出口。视觉上刻意做轻，不抢主界面重心。 */
+.widthhint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--signal-soft);
+  border-bottom: var(--rule) solid var(--border);
+}
+
+.widthhint__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.widthhint__close {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.widthhint__close:hover {
+  color: var(--text);
+  border-color: var(--signal);
+}
+
+/* ── 侧边栏档（v1.3）：320–360px 物理窄栏 ──────────────────
+   策略是「缩小 + 换行」，不折叠功能 —— 侧边栏本来就窄，
+   藏功能等于让用户在小空间里找不到入口。 */
+.app--panel .brand {
+  padding: 0 8px;
+}
+
+.app--panel .brand__mark {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+/* 副标在窄栏纯属装饰，占一行高度还要挤宽度 */
+.app--panel .brand__sub {
+  display: none;
+}
+
+.app--panel .tab {
+  height: 34px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.app--panel .tab--on::after {
+  left: 7px;
+  right: 7px;
+}
+
+.app--panel .topbar__tool {
+  padding: 0 7px;
+}
+
+.app--panel .btn {
+  height: 25px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.app--panel .detectbar {
+  gap: 5px;
+  padding: 4px 7px;
+  min-height: 32px;
+}
+
+.app--panel .sel__trigger {
+  height: 25px;
+  padding: 0 6px 0 7px;
+  font-size: 11.5px;
+}
+
+.app--panel .toolbar {
+  padding: 6px 7px;
+}
+
+.app--panel .pane__head {
+  padding: 3px 7px;
+  min-height: 22px;
+}
+
+/* 类型面板：路径硬占 120px 会把下拉挤出栏外 */
+.app--panel .typepanel__path {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* 窄栏下状态文案可压缩，但不能消失（错误提示依赖它） */
+.app--panel .statusmsg {
+  font-size: 10.5px;
+}
+
+/* 兜底：即使宿主漏挂 .app--panel，窄容器也必须降级。
+   jsdom 无布局计算，这两条只能真机验（v1.3-8）。 */
+@media (max-width: 420px) {
+  .brand__sub {
+    display: none;
+  }
+
+  .tab {
+    height: 34px;
+    padding: 0 9px;
+    font-size: 12px;
+  }
+
+  .tab--on::after {
+    left: 7px;
+    right: 7px;
+  }
+
+  .typepanel__path {
+    min-width: 0;
+  }
 }
 
 /* ── 动效降级：尊重系统「减弱动态效果」 ──────────────────── */

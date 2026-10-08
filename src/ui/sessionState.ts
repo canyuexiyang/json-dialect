@@ -36,9 +36,12 @@ export async function writeSession(state: SessionState): Promise<void> {
  *
  * chrome.storage 在扩展上下文异常（企业策略禁用 / 权限未就绪 / 上下文失效）时
  * 可能既不 resolve 也不 reject。任何 await 都必须有兜底，否则整条初始化链路
- * 会被拖死 —— 表现为「布局出来了但输入区点不动」。
+ * 会被拖死 —— 表现为「布局出来了但输入区点不动」（坑 9）。
+ *
+ * v1.3：原先此文件与 app.ts / controller.ts 各有一份几乎相同的实现，
+ * 抽到这里单点维护。
  */
-function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+export function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return new Promise<T>((resolve) => {
     let settled = false;
     const timer = setTimeout(() => {
@@ -94,6 +97,8 @@ export interface Prefs {
   strict?: boolean;
   /** FR-I5：转义 tab 的方向（去除转义 / 增加转义），历史偏好覆盖默认值 */
   escapeDir?: string;
+  /** v1.3.1：宽度引导条已被用户关闭（侧边栏宽度无 API，只能提示一次） */
+  hintWidth?: boolean;
 }
 
 const PREF_KEY = 'json-dialect-prefs';

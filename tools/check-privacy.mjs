@@ -41,6 +41,8 @@ if (!manifestRaw) {
   failures.push('manifest.json 不存在');
 } else {
   const m = JSON.parse(manifestRaw);
+  // sidePanel 是**非 host 权限**：Chrome 官方明示侧边栏无需 host 权限即可展示 UI，
+  // 因此它不落在forbiddenPerms 里，但必须在白名单中显式列出（v1.3 起）。
   const forbiddenPerms = [
     'tabs',
     'activeTab',
@@ -60,10 +62,13 @@ if (!manifestRaw) {
     failures.push(`manifest 存在 host_permissions: ${JSON.stringify(m.host_permissions)}`);
   }
   if (m.manifest_version !== 3) failures.push('manifest_version 必须为 3');
-  const allowed = ['storage'];
+  // 白名单是「对外可见的权限承诺」单一事实源：README / 商店描述必须与之一致。
+  // 改动这里等于改动隐私承诺，需同步 v1.3-9 文档。
+  const allowed = ['storage', 'sidePanel'];
   const extra = perms.filter((p) => !allowed.includes(p));
   if (extra.length) failures.push(`manifest 含非白名单权限: ${extra.join(', ')}`);
-  notes.push(`manifest 权限: ${JSON.stringify(perms)}（白名单仅 storage）`);
+  notes.push(`manifest 权限: ${JSON.stringify(perms)}（白名单：${allowed.join(' + ')}）`);
+  notes.push('sidePanel 为非host 权限，不申请任何 host 权限，零联网能力不变');
 }
 
 // ---- 2. 源码网络 API 审查（AC-35） ----

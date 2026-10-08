@@ -1,0 +1,1 @@
+function e(){typeof chrome>"u"||!chrome.sidePanel||chrome.sidePanel.setPanelBehavior({openPanelOnActionClick:!0}).catch(()=>{})}chrome.runtime.onInstalled.addListener(e);chrome.runtime.onStartup.addListener(e);e();

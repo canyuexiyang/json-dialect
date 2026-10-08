@@ -25,7 +25,8 @@ import { suggestFormats, type FormatSuggestion } from '../core/suggestFormat.js'
 import { createEditor, type EditorHandle } from './editor.js';
 import { copyText, selectAllIn } from './clipboard.js';
 import { downloadText, downloadLabel } from './download.js';
-import { loadPrefs, savePrefs, writeSession, type Prefs } from './sessionState.js';
+import { loadPrefs, savePrefs, writeSession, withTimeout, type Prefs } from './sessionState.js';
+import { closeSidePanel } from './sidePanel.js';
 import { createTypePanel, isOverrideType, type OverrideType } from './typeWidgets.js';
 import { decorateSelect, bindHiddenClose, type SelectHandle } from './select.js';
 
@@ -64,6 +65,9 @@ export interface DomRefs {
   btnCompact: HTMLButtonElement;
   btnCopy: HTMLButtonElement;
   btnDownload: HTMLButtonElement;
+  /** 宽度引导条（v1.3.1）：只在侧边栏形态出现，可关闭 */
+  widthHint?: HTMLElement;
+  widthHintClose?: HTMLButtonElement;
   splitter?: HTMLElement;
 }
 
@@ -71,11 +75,26 @@ export interface DomRefs {
 const T1 = 100_000;
 const T2 = 500_000;
 
+/** splitter 拖拽/键盘微调的上下限比例 */
+const SPLIT_MIN = 0.2;
+const SPLIT_MAX = 0.8;
+/** 键盘单次微调步长 */
+const SPLIT_STEP = 0.05;
+/**
+ * 单个 pane 的最小高度兜底（px）。
+ * `.pane` 是 flex:1 1 0，可以被压到 0 —— 一旦输入区被压没，
+ * 用户连撤销都够不到，且窄侧边栏下高度紧张时最容易触发。
+ */
+const PANE_MIN_PX = 72;
+
 /** 修正 > 5 处时视觉强调（M2-1） */
 const FIX_WARN_THRESHOLD = 5;
 
 /** 三个功能 tab（FR-L1：顺序固定 ① 格式化 · ② 转义 · ③ 转换） */
 export type TabId = 'format' | 'escape' | 'convert';
+
+/** 承载形态（v1.3）：侧边栏 / 独立标签页 */
+export type SurfaceKind = 'panel' | 'tab';
 
 const TAB_ORDER: TabId[] = ['format', 'escape', 'convert'];
 
@@ -135,10 +154,13 @@ export class AppController {
   private selects: SelectHandle[] = [];
   /** v1.2：入场动画只跑一次，动画结束后摘掉 class，避免影响后续交互 */
   private booted = false;
+  /** v1.3.1：宽度引导条已被用户关掉（存进 prefs，属界面偏好，不违反 FR-H4） */
+  private hintWidthDismissed = false;
 
   constructor(
     private dom: DomRefs,
-    private opts: { isPage?: boolean } = {},
+    /** 承载形态：侧边栏 / 独立标签页。v1.2 的 `isPage` 是死代码（零读取点），已删除。 */
+    private opts: { surface?: SurfaceKind } = {},
   ) {}
 
   /**
@@ -267,6 +289,9 @@ export class AppController {
     if (prefs.escapeDir === 'encode' || prefs.escapeDir === 'decode') {
       this.escapeDir = prefs.escapeDir;
     }
+    // v1.3.1：引导条只提示一次，关过就不再打扰
+    if (prefs.hintWidth !== undefined) this.hintWidthDismissed = prefs.hintWidth;
+    this.syncWidthHint();
     this.renderTabs();
     this.syncTabControls();
 
@@ -372,7 +397,15 @@ export class AppController {
 
     this.dom.enlarge?.addEventListener('click', () => void this.handleEnlarge());
 
+    // v1.3.1：宽度引导条「知道了」—— 关掉即写入 prefs，下次不再出现
+    this.dom.widthHintClose?.addEventListener('click', () => {
+      this.hintWidthDismissed = true;
+      this.syncWidthHint();
+      void this.persist();
+    });
+
     this.dom.splitter?.addEventListener('pointerdown', (e) => this.startDrag(e as PointerEvent));
+    this.bindSplitterKeys();
 
     // 修正提示条：点击摘要区展开/收起明细（FR-D5）
     this.dom.fixbar.addEventListener('click', (e) => {
@@ -509,6 +542,7 @@ export class AppController {
       target: this.target,
       strict: this.strict,
       escapeDir: this.escapeDir,
+      hintWidth: this.hintWidthDismissed,
     });
   }
 
@@ -875,7 +909,7 @@ export class AppController {
     }
   }
 
-  /** C-1 / FR-F6：window.open，不用 chrome.tabs.create */
+  /** C-1 / FR-F6：window.open，不用 chrome.tabs.create（AC-49 禁令） */
   private async handleEnlarge(): Promise<void> {
     await writeSession({
       input: this.in.getDoc(),
@@ -891,26 +925,127 @@ export class AppController {
       escapeDir: this.escapeDir,
     });
     window.open(chrome.runtime.getURL('app.html'), '_blank');
+
+    // v1.3.1：新开标签页后必须关掉侧边栏，否则屏幕上同时存在两个扩展实例，
+    // 侧边栏那份还白占 320~360px（用户实测反馈的问题 2）。
+    // tab 形态本来就是整屏，没有面板可关。
+    if (this.opts.surface === 'panel') {
+      await closeSidePanel();
+    }
+  }
+
+  /**
+   * 宽度引导条的显隐（v1.3.1）
+   *
+   * Chrome 侧边栏宽度**没有 API**：默认约 360px、最小硬底约 320px，
+   * 只能用户手动拖边缘，扩展既不能设置也不能让它随窗口自适应。
+   * 所以「默认占 1/3」做不到，能做的是把这件事说清楚 + 给出一键升级的出口。
+   */
+  private syncWidthHint(): void {
+    const hint = this.dom.widthHint;
+    if (!hint) return;
+    // 只在侧边栏形态提示；标签页形态已是整屏，提示是噪音
+    const show = this.opts.surface === 'panel' && !this.hintWidthDismissed;
+    hint.hidden = !show;
+  }
+
+  /**
+   * 按比例设置输入区高度。
+   *
+   * 两个要点：
+   *  - 用 `setProperty` 而不是 `style.flex = ...`：内联样式的优先级高于样式表，
+   *    形态切换时若不显式清除就会残留（v1.2 的隐患）。
+   *  - 同时写 minHeight 兜底：`.pane` 是 flex:1 1 0，窄侧边栏下高度紧张时
+   *    会被压到 0，输出区随之消失。
+   */
+  private applySplit(ratio: number): void {
+    const splitter = this.dom.splitter;
+    if (!splitter) return;
+    const container = splitter.parentElement;
+    const inPane = container?.querySelector('.pane--in') as HTMLElement | null;
+    if (!inPane) return;
+    const clamped = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, ratio));
+    const containerH = container?.clientHeight ?? 0;
+    inPane.style.setProperty('flex', String(0.5 + clamped));
+    // 容器高度未知（jsdom / 首帧）时不写死 minHeight，避免 0 高度锁死布局
+    if (containerH > 0) {
+      inPane.style.setProperty(
+        'min-height',
+        `${Math.min(PANE_MIN_PX, Math.round(containerH * clamped * 0.5))}px`,
+      );
+    }
+  }
+
+  /** 清除内联 flex / min-height，回到样式表默认值（形态切换或销毁时用） */
+  private clearSplit(): void {
+    const splitter = this.dom.splitter;
+    const inPane = splitter?.parentElement?.querySelector('.pane--in') as HTMLElement | null;
+    if (!inPane) return;
+    inPane.style.removeProperty('flex');
+    inPane.style.removeProperty('min-height');
   }
 
   private startDrag(e: PointerEvent): void {
     const splitter = this.dom.splitter;
     if (!splitter) return;
+    splitter.classList.add('is-dragging');
     const container = splitter.parentElement as HTMLElement;
     const startY = e.clientY;
     const rect = container.getBoundingClientRect();
+    // rect.height 在 jsdom 中恒为 0，必须有兜底，否则 ratio 恒为 0
+    const span = rect.height || container.clientHeight || 0;
+    let last = 0.5;
     const move = (ev: PointerEvent) => {
       const dy = ev.clientY - startY;
-      const ratio = Math.min(0.8, Math.max(0.2, dy / rect.height));
-      const inPane = container.querySelector('.pane--in') as HTMLElement | null;
-      if (inPane) inPane.style.flex = String(0.5 + ratio);
+      last = span > 0 ? Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, dy / span)) : 0.5;
+      this.applySplit(last);
     };
     const up = () => {
+      splitter.classList.remove('is-dragging');
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }
+
+  /**
+   * splitter 键盘可达（a11y）：ArrowUp/Down 每次微调 5%，
+   * Home/End 归到两端。tabindex="0" 早就有了，但一直没绑 keydown。
+   */
+  private bindSplitterKeys(): void {
+    const splitter = this.dom.splitter;
+    if (!splitter) return;
+    const read = (): number => {
+      const inPane = splitter.parentElement?.querySelector('.pane--in') as HTMLElement | null;
+      const flex = inPane?.style.getPropertyValue('flex');
+      const parsed = flex ? Number.parseFloat(flex) : Number.NaN;
+      return Number.isFinite(parsed) ? parsed - 0.5 : 0.5;
+    };
+    splitter.addEventListener('keydown', (e) => {
+      const cur = read();
+      let next: number | null = null;
+      switch (e.key) {
+        case 'ArrowUp':
+          next = cur + SPLIT_STEP;
+          break;
+        case 'ArrowDown':
+          next = cur - SPLIT_STEP;
+          break;
+        case 'Home':
+          next = SPLIT_MIN;
+          break;
+        case 'End':
+          next = SPLIT_MAX;
+          break;
+        default:
+          return;
+      }
+      e.preventDefault();
+      this.applySplit(next);
+    });
   }
 
   /** 供放大页与外部驱动（自动化测试）写入输入内容 */
@@ -952,37 +1087,6 @@ export class AppController {
   get currentEscapeDir(): EscapeDir {
     return this.escapeDir;
   }
-}
-
-/**
- * 给 Promise 套超时。超时后返回 fallback，而不是永远挂起。
- *
- * chrome.storage 在扩展上下文异常时可能既不 resolve 也不 reject，
- * 任何 await 都必须有兜底，否则 UI 初始化会被整条链路拖死。
- */
-function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return new Promise<T>((resolve) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      resolve(fallback);
-    }, ms);
-    p.then(
-      (v) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(v);
-      },
-      () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(fallback);
-      },
-    );
-  });
 }
 
 /** 剥离提示里的前缀片段截断，避免超长日志行撑爆布局 */

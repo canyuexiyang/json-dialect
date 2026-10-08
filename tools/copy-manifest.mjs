@@ -19,7 +19,7 @@ if (!fs.existsSync(src)) {
 const raw = fs.readFileSync(src, 'utf8');
 // 顺手做一次权限白名单断言，避免产物里混进越权声明（AC-34）
 const manifest = JSON.parse(raw);
-const allowed = new Set(['storage']);
+const allowed = new Set(['storage', 'sidePanel']);
 const perms = manifest.permissions ?? [];
 const bad = perms.filter((p) => !allowed.has(p));
 if (bad.length > 0) {
@@ -55,6 +55,32 @@ for (const [, rel] of Object.entries(manifest.icons ?? {})) {
   }
 }
 
+// 断言：side_panel.default_path 必须存在于产物（v1.3）。
+// 这是坑 7 的同款防御 —— Vite 不会把未注册为入口的 HTML 拷进产物，
+// 而 manifest 指向一个不存在的文件时，Chrome 的表现是「点了图标没反应」，
+// 没有任何单测能发现。
+const panelPath = manifest.side_panel?.default_path;
+if (panelPath) {
+  const abs = path.resolve('dist', panelPath);
+  if (!fs.existsSync(abs)) {
+    console.error(`manifest side_panel.default_path 缺失于产物：${panelPath}`);
+    process.exit(1);
+  }
+}
+
+// 断言：service worker 入口必须存在（v1.3）。
+// 没有它 = 没有 default_popup + 没有 worker = 点图标完全无反应。
+const swPath = manifest.background?.service_worker;
+if (swPath) {
+  const abs = path.resolve('dist', swPath);
+  if (!fs.existsSync(abs)) {
+    console.error(`manifest background.service_worker 缺失于产物：${swPath}`);
+    process.exit(1);
+  }
+}
+
 fs.mkdirSync(path.dirname(dst), { recursive: true });
 fs.writeFileSync(dst, raw, 'utf8');
-console.log(`manifest.json → dist/（权限：${JSON.stringify(perms)}，图标 ${iconCount} 个）`);
+console.log(
+  `manifest.json → dist/（权限：${JSON.stringify(perms)}，图标 ${iconCount} 个，侧边栏 ${panelPath ?? '无'}，worker ${swPath ?? '无'}）`,
+);

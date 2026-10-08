@@ -70,13 +70,28 @@ function mount(): DomRefs {
   };
 }
 
-/** 安装一个永不 settle 的 chrome.storage —— 模拟扩展上下文失效 */
+/**
+ * 安装一个永不 settle 的 chrome.storage —— 模拟扩展上下文失效。
+ *
+ * v1.3：必须同时补sidePanel / action / runtime 事件 ——
+ * 缺任何一项，controller 或 shell 就会在初始化里抛错，
+ * 表现为「3 个用例假红」，很容易被误判成新改动引入了 bug。
+ */
 function installHangingStorage(): void {
   const never = () => new Promise<never>(() => {});
   (globalThis as Record<string, unknown>).chrome = {
-    runtime: { getURL: (p: string) => `chrome-extension://x/${p}` },
+    runtime: {
+      getURL: (p: string) => `chrome-extension://x/${p}`,
+      onInstalled: { addListener() {}, removeListener() {} },
+      onStartup: { addListener() {}, removeListener() {} },
+    },
+    sidePanel: {
+      setPanelBehavior: never as unknown as () => Promise<void>,
+      getPanelBehavior: never as unknown as () => Promise<unknown>,
+      open: never as unknown as () => Promise<void>,
+    },
     storage: {
-      local: { get: never, set: never },
+      local: { get: never, set: never, remove: never },
       session: { get: never, set: never, remove: never },
     },
   };
