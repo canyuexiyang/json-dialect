@@ -10,7 +10,7 @@
  *      全部失败 → errors.from(failure)
  */
 
-import { lex, significant, type Mark, type Token } from './lexer.js';
+import { lex, type Mark, type Token } from './lexer.js';
 import { detect, fallbackOrder } from './detect.js';
 import { parseJson } from './parse/json.js';
 import { parsePython } from './parse/python.js';
@@ -22,6 +22,7 @@ import { toJavaEsc } from './serialize/toJavaEsc.js';
 import { marksToFixes, dedupeFixes, type FixEntry, type DuplicateInfo } from './fixLog.js';
 import { Deadline, ParseError, TimeoutError } from './errors.js';
 import { findLogPrefix, type LogPrefix } from './logPrefix.js';
+import { applyOverrides } from './overrides.js';
 import { keyToString, type JVal } from './ir.js';
 import {
   outputLangFor,
@@ -122,10 +123,11 @@ export function computeStats(text: string): { lines: number; chars: number } {
   return { lines, chars: [...text].length };
 }
 
-function collectDuplicates(ir: JVal): DuplicateInfo | undefined {
+function collectDuplicates(ir: JVal, deadline: Deadline): DuplicateInfo | undefined {
   const seen = new Map<string, number>();
   const dupKeys = new Set<string>();
   function walk(n: JVal): void {
+    deadline.check();
     if (n.k !== 'obj') {
       if (n.k === 'arr') n.items.forEach(walk);
       return;
@@ -144,6 +146,7 @@ function collectDuplicates(ir: JVal): DuplicateInfo | undefined {
   const keys: string[] = [];
   // 统计重复条目数
   function countDups(n: JVal): void {
+    deadline.check();
     if (n.k !== 'obj') {
       if (n.k === 'arr') n.items.forEach(countDups);
       return;
@@ -167,6 +170,24 @@ function collectDuplicates(ir: JVal): DuplicateInfo | undefined {
 }
 
 export function convert(text: string, opts: ConvertOptions = {}): ConvertResult {
+  const deadline = new Deadline(Date.now() + (opts.timeoutMs ?? 3000));
+  try {
+    deadline.check(true);
+    const result = convertWithDeadline(text, opts, deadline);
+    deadline.check(true);
+    return result;
+  } catch (e) {
+    if (!(e instanceof TimeoutError)) throw e;
+    const source = opts.force ?? 'json';
+    return {
+      status: 'timeout', source, locked: !!opts.force, output: '',
+      outputLang: outputLangFor(source, opts.target), values: [], fixes: [], stats: computeStats(text),
+      error: { kind: 'timeout', line: 1, col: 0, message: '转换超时，请拆分文本后重试' },
+    };
+  }
+}
+
+function convertWithDeadline(text: string, opts: ConvertOptions, deadline: Deadline): ConvertResult {
   const stats = computeStats(text);
   const emptyBase = (source: SourceFormat, locked: boolean): ConvertResult => ({
     status: 'empty',
@@ -197,13 +218,11 @@ export function convert(text: string, opts: ConvertOptions = {}): ConvertResult 
     };
   }
 
-  const lexed = opts.tokens ? null : lex(working);
+  const lexed = opts.tokens ? null : lex(working, { deadline });
   const tokens = opts.tokens ?? lexed!.tokens;
-  const sig = significant(tokens);
+  const sig = tokens;
   const primary: SourceFormat = opts.force ?? detect(tokens, working).format;
   const locked = !!opts.force;
-
-  const deadline = new Deadline(Date.now() + (opts.timeoutMs ?? 3000));
 
   // FR-K1 严格档：只跑严格层、不跨格式回退 —— 语法偏差一律报错，不自动修复
   const strictOnly = opts.strictOnly ?? false;
@@ -213,7 +232,7 @@ export function convert(text: string, opts: ConvertOptions = {}): ConvertResult 
   let lastErr: ParseError | null = null;
   // 注释剥离发生在 lexer 层，其修正记录存在于完整 token 流中；
   // 成功路径需把它并入 fixLog，否则 AC-19「修正条列出剥离位置」不成立。
-  const lexMarks = prefixMark ? [prefixMark, ...(lexed?.marks ?? [])] : (lexed?.marks ?? []);
+  const lexMarks = prefixMark ? [prefixMark] : [];
 
   for (let oi = 0; oi < order.length; oi++) {
     const fmt = order[oi];
@@ -231,7 +250,8 @@ export function convert(text: string, opts: ConvertOptions = {}): ConvertResult 
         stats,
         false,
         oi > 0 ? primary : undefined,
-        lexMarks,
+        [...lexMarks, ...(!strictOnly && fmt !== 'map' ? tokens.filter((t) => t.type === 'comment').flatMap((t) => t.marks) : [])],
+        deadline,
       );
     } catch (e) {
       if (e instanceof TimeoutError) {
@@ -241,7 +261,8 @@ export function convert(text: string, opts: ConvertOptions = {}): ConvertResult 
           error: { kind: 'timeout', line: 1, col: 0, message: '转换超时，建议用放大页面或拆分文本' },
         };
       }
-      lastErr = e as ParseError;
+      if (!(e instanceof ParseError)) throw e;
+      lastErr = e;
       // 严格档到此为止：不再进宽松层、不再跨格式回退
       if (strictOnly) break;
     }
@@ -258,7 +279,8 @@ export function convert(text: string, opts: ConvertOptions = {}): ConvertResult 
         stats,
         true,
         oi > 0 ? primary : undefined,
-        lexMarks,
+        [...lexMarks, ...(!strictOnly && fmt !== 'map' ? tokens.filter((t) => t.type === 'comment').flatMap((t) => t.marks) : [])],
+        deadline,
       );
     } catch (e) {
       if (e instanceof TimeoutError) {
@@ -268,7 +290,8 @@ export function convert(text: string, opts: ConvertOptions = {}): ConvertResult 
           error: { kind: 'timeout', line: 1, col: 0, message: '转换超时，建议用放大页面或拆分文本' },
         };
       }
-      lastErr = e as ParseError;
+      if (!(e instanceof ParseError)) throw e;
+      lastErr = e;
     }
   }
 
@@ -301,13 +324,24 @@ function buildResult(
   opts: ConvertOptions,
   stats: { lines: number; chars: number },
   fixed: boolean,
-  fallbackFrom?: SourceFormat,
-  lexMarks: Mark[] = [],
+  fallbackFrom: SourceFormat | undefined,
+  lexMarks: Mark[],
+  deadline: Deadline,
 ): ConvertResult {
-  const fixes = dedupeFixes(marksToFixes([...lexMarks, ...marks]));
+  const fixes = dedupeFixes(marksToFixes([...lexMarks, ...marks].filter((mark) => !(opts.strictOnly && fmt === 'python' && (mark.type === 'trailing_comma' || mark.type === 'nonstring_key')))));
   const resolved: TargetFormat | 'auto' = opts.target === 'same' ? sameTarget(fmt) : (opts.target ?? 'auto');
   const outLang = outputLangFor(fmt, resolved);
-  const output = serialize(ir, outLang, opts);
+  let output: string;
+  try {
+    output = serialize(applyOverrides(ir, values, opts.overrides, deadline), outLang, opts, deadline);
+  } catch (e) {
+    if (!(e instanceof ParseError)) throw e;
+    return {
+      status: 'error', source: fmt, locked, output: '', outputLang: outLang,
+      ir, values, fixes, stats,
+      error: { kind: e.kind, line: e.line, col: e.col, message: e.message },
+    };
+  }
   // 修正记录可能来自 lexer 层（如注释剥离），故以 fixes 是否为空为准，而非「走了第几层」
   const status: ConvertStatus = fallbackFrom ? 'fallback' : fixes.length > 0 ? 'fixed' : 'ok';
   return {
@@ -321,20 +355,20 @@ function buildResult(
     ir,
     values,
     fixes,
-    duplicates: collectDuplicates(ir),
+    duplicates: collectDuplicates(ir, deadline),
     stats,
   };
 }
 
 /** 按目标语言选择序列化器（FR-A13 修订 / FR-A17 / FR-A18 / FR-A19） */
-function serialize(ir: JVal, lang: OutputLang, opts: ConvertOptions): string {
+function serialize(ir: JVal, lang: OutputLang, opts: ConvertOptions, deadline: Deadline): string {
   switch (lang) {
     case 'json':
-      return toJson(ir, { compact: opts.compact });
+      return toJson(ir, { compact: opts.compact, deadline });
     case 'java':
-      return toJavaEsc(ir, { compact: opts.compact });
+      return toJavaEsc(ir, { compact: opts.compact, deadline });
     case 'python':
-      return toPython(ir, { compact: opts.compact }, opts.overrides);
+      return toPython(ir, { compact: opts.compact, deadline, preserveTypes: opts.target === 'same' });
   }
 }
 

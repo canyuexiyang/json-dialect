@@ -174,11 +174,11 @@ for (const width of WIDTHS) {
   await page.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
   await page.waitForSelector('.cm-editor');
 
-  // 侧边栏里输入 + 切到转换 tab
+  // tab 工作区互不共享，先进入转换工作区再输入。
+  await page.click('[data-tab="convert"]');
   await page.click('#editorIn .cm-content');
   await page.keyboard.type("{'a': 1, 'b': True}");
   await new Promise((r) => setTimeout(r, 500));
-  await page.click('[data-tab="convert"]');
   await new Promise((r) => setTimeout(r, 300));
   const panelOut = await page.evaluate(() => document.querySelector('#editorOut .cm-content')?.textContent ?? '');
   await page.screenshot({ path: `${OUT}/panel-360-convert-filled.png` });
@@ -187,9 +187,10 @@ for (const width of WIDTHS) {
   await page.click('#enlarge');
   await new Promise((r) => setTimeout(r, 900));
   const openedUrls = (await browser.pages()).map((x) => x.url());
-  const sessionPayload = await page.evaluate(() =>
-    window.localStorage.getItem('json-dialect-session'),
-  );
+  const openedApp = openedUrls.find((url) => url.startsWith(`${BASE}/app.html#`));
+  if (!openedApp) throw new Error('未打开带交接标识的标签页');
+  const sessionKey = 'json-dialect-session:' + new URL(openedApp).hash.slice(1);
+  const sessionPayload = await page.evaluate((key) => window.localStorage.getItem(key), sessionKey);
 
   // v1.3.1：点「标签页」后必须关掉侧边栏 —— 这里验证扩展确实调用了
   // chrome.sidePanel.close({ windowId })（stub 已记录调用参数）。
@@ -203,7 +204,7 @@ for (const width of WIDTHS) {
   await tabPage.setViewport({ width: 1100, height: 800, deviceScaleFactor: 2 });
   await tabPage.evaluateOnNewDocument(`window.__V13_BASE__ = ${JSON.stringify(BASE)};`);
   await tabPage.evaluateOnNewDocument(makeChromeStub);
-  await tabPage.goto(`${BASE}/app.html`, { waitUntil: 'networkidle0' });
+  await tabPage.goto(openedApp, { waitUntil: 'networkidle0' });
   await tabPage.waitForSelector('.cm-editor', { timeout: 8000 });
   await new Promise((r) => setTimeout(r, 500));
 

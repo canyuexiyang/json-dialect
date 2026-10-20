@@ -8,6 +8,7 @@
  */
 
 import { decodeStringBody } from './escape.js';
+import type { Deadline } from './errors.js';
 
 export type TokenType =
   | 'punct' // { } [ ] ( ) , : =
@@ -20,6 +21,10 @@ export type TokenType =
 
 /** 该 token 生成时触发的「容忍修复」（评审 D-1） */
 export type MarkType =
+  | 'number_normalized'
+  | 'quote_normalized'
+  | 'literal_normalized'
+  | 'separator_fixed'
   | 'quote_fixed' // 单/双引号互转补齐或引号未闭合
   | 'key_quoted' // 裸键名补引号
   | 'trailing_comma' // 删除末尾多余逗号
@@ -53,6 +58,8 @@ export interface Token {
   numRaw?: string;
   /** 三引号字符串标记 */
   triple?: boolean;
+  body?: string;
+  closed?: boolean;
   start: number;
   end: number;
   line: number; // 1-based
@@ -69,6 +76,7 @@ const IDENT_BODY = /[A-Za-z0-9_$@.]/;
 export interface LexOptions {
   /** 是否允许 Python `#` 注释（Python / Map 模式开启） */
   allowComment?: boolean;
+  deadline?: Deadline;
 }
 
 /**
@@ -129,6 +137,7 @@ export function lex(text: string, opts: LexOptions = {}): LexResult {
   };
 
   while (i < text.length) {
+    opts.deadline?.check();
     const ch = text[i];
 
     // BOM（U+FEFF）：直接跳过，不产出 token（AC-57 / F3）。
@@ -149,7 +158,7 @@ export function lex(text: string, opts: LexOptions = {}): LexResult {
     // 空白
     if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\f' || ch === '\v') {
       const s = i;
-      while (i < text.length && /[ \t\r\f\v]/.test(text[i])) i++;
+      while (i < text.length && /[ \t\r\f\v]/.test(text[i])) { opts.deadline?.check(); i++; }
       push('ws', s, text.slice(s, i));
       continue;
     }
@@ -157,7 +166,7 @@ export function lex(text: string, opts: LexOptions = {}): LexResult {
     // 注释（Python # 行注释）
     if (ch === '#' && allowComment) {
       const s = i;
-      while (i < text.length && text[i] !== '\n') i++;
+      while (i < text.length && text[i] !== '\n') { opts.deadline?.check(); i++; }
       const raw = text.slice(s, i);
       const pos = lt.pos(s);
       const mk: Mark[] = [
@@ -190,16 +199,13 @@ export function lex(text: string, opts: LexOptions = {}): LexResult {
       const s = i;
       i++;
       while (i < text.length && NUM_BODY.test(text[i])) {
+        opts.deadline?.check();
         // 允许 e/E 后跟 +/-，但不允许连续多个符号造成误吞
         i++;
       }
       // 回退尾部孤立符号（如 `1-` 不应把 - 吞进数字）
-      while (i > s + 1 && /[+\-]$/.test(text.slice(s, i))) i--;
+      while (i > s + 1 && /[+\-]/.test(text[i - 1])) { opts.deadline?.check(); i--; }
       let raw = text.slice(s, i);
-      if (raw.endsWith('.')) {
-        raw = raw.slice(0, -1);
-        i--;
-      }
       push('number', s, raw, { numRaw: raw });
       continue;
     }
@@ -207,6 +213,7 @@ export function lex(text: string, opts: LexOptions = {}): LexResult {
     // 字符串（含三引号）
     if (ch === '"' || ch === "'") {
       const s = i;
+      const startPos = lt.pos(s);
       const q = ch as '"' | "'";
       const tripleQ = text.slice(i, i + 3) === q + q + q;
       const qLen = tripleQ ? 3 : 1;
@@ -215,20 +222,13 @@ export function lex(text: string, opts: LexOptions = {}): LexResult {
       let closed = false;
       const mk: Mark[] = [];
       while (j < text.length) {
+        opts.deadline?.check();
         const c = text[j];
         if (c === '\\') {
           const nx = text[j + 1];
           if (nx !== undefined) {
             body += c + nx;
-            if (nx === q) {
-              mk.push({
-                type: 'escaped_quote',
-                line: lt.pos(j).line,
-                col: lt.pos(j).col,
-                before: c + nx,
-                after: nx,
-              });
-            }
+            if (nx === '\n') lt.newline(j + 1);
             j += 2;
             continue;
           }
@@ -280,7 +280,7 @@ export function lex(text: string, opts: LexOptions = {}): LexResult {
           after: '(已容错闭合)',
         });
       }
-      push('string', s, raw, { quote: q, value: decodeStringBody(body), triple: tripleQ }, mk);
+      push('string', s, raw, { ...startPos, quote: q, body, closed, value: decodeStringBody(body, 'python', false, opts.deadline), triple: tripleQ }, mk);
       i = j;
       continue;
     }
@@ -292,21 +292,13 @@ export function lex(text: string, opts: LexOptions = {}): LexResult {
     ) {
       const s = i;
       if (ch === '-' || ch === '+') i++;
-      while (i < text.length && IDENT_BODY.test(text[i])) i++;
+      while (i < text.length && IDENT_BODY.test(text[i])) { opts.deadline?.check(); i++; }
       push('ident', s, text.slice(s, i));
       continue;
     }
 
     // 无法识别的字符
-    push('invalid', i, ch, {}, [
-      {
-        type: 'bracket_closed',
-        line: lt.pos(i).line,
-        col: lt.pos(i).col,
-        before: ch,
-        after: '(无法识别的字符)',
-      },
-    ]);
+    push('invalid', i, ch);
     i++;
   }
 

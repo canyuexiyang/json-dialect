@@ -24,6 +24,7 @@ export interface TypePanelHandle {
   setOverride(path: string, t: OverrideType): void;
   render(host: HTMLElement, r: ConvertResult, onChange: () => void): void;
   clear(): void;
+  retain(paths: Set<string>): void;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -38,7 +39,7 @@ const PANEL_THRESHOLD = 50; // FR-C11
 export function createTypePanel(): TypePanelHandle {
   const map = new Map<string, OverrideType>();
 
-  function choose(slot: ValueSlot, onChange: () => void): HTMLSelectElement {
+  function choose(slot: ValueSlot, onChange: () => void, host: HTMLElement): HTMLSelectElement {
     const sel = document.createElement('select');
     sel.className = 'typedrop';
     const infer = document.createElement('option');
@@ -57,6 +58,8 @@ export function createTypePanel(): TypePanelHandle {
       if (sel.value === 'infer') map.delete(slot.path);
       else map.set(slot.path, sel.value as OverrideType);
       onChange();
+      const row = Array.from(host.querySelectorAll<HTMLElement>('.typepanel__row')).find((item) => item.dataset.path === slot.path);
+      row?.querySelector<HTMLButtonElement>('.sel__trigger')?.focus();
     });
     return sel;
   }
@@ -88,11 +91,12 @@ export function createTypePanel(): TypePanelHandle {
       for (const slot of slots) {
         const row = document.createElement('div');
         row.className = 'typepanel__row';
+        row.dataset.path = slot.path;
         const path = document.createElement('span');
         path.className = 'typepanel__path';
         path.textContent = slot.path || '(根)';
         row.appendChild(path);
-        row.appendChild(choose(slot, onChange));
+        row.appendChild(choose(slot, onChange, host));
         list.appendChild(row);
       }
       host.appendChild(list);
@@ -113,13 +117,15 @@ export function createTypePanel(): TypePanelHandle {
       clear.textContent = '清除覆盖';
       clear.addEventListener('click', () => {
         map.clear();
-        host.innerHTML = '';
         onChange();
       });
       host.appendChild(clear);
     },
     clear() {
       map.clear();
+    },
+    retain(paths) {
+      for (const path of map.keys()) if (!paths.has(path)) map.delete(path);
     },
   };
 }

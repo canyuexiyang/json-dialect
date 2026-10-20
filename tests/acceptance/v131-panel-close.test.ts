@@ -141,7 +141,7 @@ describe('点「标签页」必须同时关掉侧边栏', () => {
         session: { get: async () => ({}), set: async () => {}, remove: async () => {} },
       },
     });
-    vi.spyOn(window, 'open').mockReturnValue(null);
+    vi.spyOn(window, 'open').mockReturnValue(window);
 
     const dom = mountShell('panel');
     const app = new AppController(dom, { surface: 'panel' });

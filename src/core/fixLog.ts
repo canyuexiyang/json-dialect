@@ -19,6 +19,10 @@ export interface FixEntry {
 }
 
 const ACTION_TEXT: Record<Mark['type'], string> = {
+  number_normalized: '数字字面量规范化',
+  quote_normalized: '字符串引号规范化',
+  literal_normalized: '字面量规范化',
+  separator_fixed: '键值分隔符规范化',
   quote_fixed: '引号未闭合，已容错闭合',
   key_quoted: '键名补充引号',
   trailing_comma: '删除末尾多余逗号',

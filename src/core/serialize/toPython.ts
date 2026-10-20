@@ -1,3 +1,5 @@
+import type { Deadline } from '../errors.js';
+
 /**
  * IR → Python 字面量序列化（FR-A8–A10、§7.2 引号选择算法）
  *
@@ -10,54 +12,25 @@ import { encodePythonString } from '../escape.js';
 
 export interface SerializeOptions {
   compact?: boolean;
+  deadline?: Deadline;
+  preserveTypes?: boolean;
   indent?: number;
 }
 
 /** 应用手动类型覆盖（FR-C7/C8）：按路径替换值的类型 */
 export type TypeOverride = Map<string, 'string' | 'number' | 'boolean' | 'null'>;
 
-function applyOverride(node: JVal, type: string): JVal {
-  switch (type) {
-    case 'string':
-      if (node.k === 'str') return node;
-      if (node.k === 'num') return { k: 'str', value: node.raw, span: node.span };
-      if (node.k === 'bool') return { k: 'str', value: node.value ? 'True' : 'False', span: node.span };
-      return { k: 'str', value: '', span: node.span };
-    case 'number':
-      if (node.k === 'num') return node;
-      if (node.k === 'str') {
-        const raw = node.value.trim();
-        return { k: 'num', raw: /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(raw) ? raw : '0', span: node.span };
-      }
-      if (node.k === 'bool') return { k: 'num', raw: node.value ? '1' : '0', span: node.span };
-      return { k: 'num', raw: '0', span: node.span };
-    case 'boolean':
-      if (node.k === 'bool') return node;
-      if (node.k === 'num') return { k: 'bool', value: node.raw !== '0', span: node.span };
-      if (node.k === 'str') return { k: 'bool', value: node.value.trim().toLowerCase() === 'true', span: node.span };
-      return { k: 'bool', value: false, span: node.span };
-    case 'null':
-      return { k: 'null', span: node.span };
-    default:
-      return node;
-  }
-}
-
 export function toPython(
   ir: JVal,
   opts: SerializeOptions = {},
-  overrides?: TypeOverride,
 ): string {
   const compact = opts.compact ?? false;
   const step = opts.indent ?? 2;
   const out: string[] = [];
 
-  function walk(node: JVal, depth: number, path: string, keySlot: string | number): void {
-    // 覆盖作用在本节点上（keySlot 是自己在父容器中的段）
-    let n = node;
-    if (overrides && overrides.has(path)) {
-      n = applyOverride(node, overrides.get(path)!);
-    }
+  function walk(node: JVal, depth: number): void {
+    const n = node;
+    opts.deadline?.check();
     switch (n.k) {
       case 'obj': {
         if (n.entries.length === 0) {
@@ -72,9 +45,10 @@ export function toPython(
             if (!compact) out.push('\n');
           }
           if (!compact) out.push(' '.repeat((depth + 1) * step));
-          out.push(encodePythonString(keyToString(e.key)));
+          if (opts.preserveTypes) walk(e.key, depth + 1);
+          else out.push(encodePythonString(keyToString(e.key), opts.deadline));
           out.push(': ');
-          walk(e.val, depth + 1, `${path}/${keyToString(e.key)}`, keyToString(e.key));
+          walk(e.val, depth + 1);
         });
         if (!compact) {
           out.push('\n');
@@ -84,11 +58,12 @@ export function toPython(
         return;
       }
       case 'arr': {
+        const tuple = opts.preserveTypes && n.tuple;
         if (n.items.length === 0) {
-          out.push('[]');
+          out.push(tuple ? '()' : '[]');
           return;
         }
-        out.push('[');
+        out.push(tuple ? '(' : '[');
         if (!compact) out.push('\n');
         n.items.forEach((it, i) => {
           if (i > 0) {
@@ -96,17 +71,18 @@ export function toPython(
             if (!compact) out.push('\n');
           }
           if (!compact) out.push(' '.repeat((depth + 1) * step));
-          walk(it, depth + 1, `${path}/${i}`, i);
+          walk(it, depth + 1);
         });
+        if (tuple && n.items.length === 1) out.push(',');
         if (!compact) {
           out.push('\n');
           out.push(' '.repeat(depth * step));
         }
-        out.push(']');
+        out.push(tuple ? ')' : ']');
         return;
       }
       case 'str':
-        out.push(encodePythonString(n.value));
+        out.push(encodePythonString(n.value, opts.deadline));
         return;
       case 'num':
         out.push(n.raw); // FR-A11
@@ -120,6 +96,6 @@ export function toPython(
     }
   }
 
-  walk(ir, 0, '', '');
+  walk(ir, 0);
   return out.join('');
 }

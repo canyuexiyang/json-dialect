@@ -23,9 +23,9 @@ import {
 } from '../core/escapeText.js';
 import { suggestFormats, type FormatSuggestion } from '../core/suggestFormat.js';
 import { createEditor, type EditorHandle } from './editor.js';
-import { copyText, selectAllIn } from './clipboard.js';
+import { copyText } from './clipboard.js';
 import { downloadText, downloadLabel } from './download.js';
-import { loadPrefs, savePrefs, writeSession, withTimeout, type Prefs } from './sessionState.js';
+import { loadPrefs, savePrefs, writeSession, discardSession, withTimeout, type Prefs, type WorkspaceState } from './sessionState.js';
 import { closeSidePanel } from './sidePanel.js';
 import { createTypePanel, isOverrideType, type OverrideType } from './typeWidgets.js';
 import { decorateSelect, bindHiddenClose, type SelectHandle } from './select.js';
@@ -106,6 +106,8 @@ const TAB_TEXT: Record<TabId, string> = {
 
 /** 放大页从 session 继承的会话态（AC-33 / FR-F6） */
 export interface InheritedState {
+  workspaces?: Record<string, WorkspaceState>;
+  strippedPrefix?: string;
   source?: string;
   locked?: boolean;
   compact?: boolean;
@@ -132,6 +134,11 @@ export class AppController {
   private locked: SourceFormat | null = null;
   private compact = false;
   private timer: number | undefined;
+  private enlarging = false;
+  private suppressInput = false;
+  private prefsRevision = 0;
+  private splitRatio = 0.5;
+  private workspaces: Partial<Record<TabId, { input: string; locked: SourceFormat | null; overrides: Array<[string, OverrideType]>; strippedPrefix: string; lastGoodOutput: string; lastGoodLang: OutputLang }>> = {};
   private lastGoodOutput = '';
   private lastGoodLang: OutputLang = 'json';
   private panel = createTypePanel();
@@ -210,11 +217,22 @@ export class AppController {
       }
     }
 
+    if (inherited?.strippedPrefix) this.strippedPrefix = inherited.strippedPrefix;
+    for (const [id, workspace] of Object.entries(inherited?.workspaces ?? {})) {
+      if (!isTabId(id) || id === this.tab) continue;
+      this.workspaces[id] = {
+        input: workspace.input,
+        locked: workspace.locked && workspace.source && isSourceFormat(workspace.source) ? workspace.source : null,
+        overrides: (workspace.overrides ?? []).filter((entry): entry is [string, OverrideType] => isOverrideType(entry[1])),
+        strippedPrefix: workspace.strippedPrefix ?? '', lastGoodOutput: '', lastGoodLang: 'json',
+      };
+    }
+
     this.in = createEditor(this.dom.editorIn, {
       doc: initialInput,
       lang: 'python',
       dark: this.dark,
-      onChange: () => this.schedule(),
+      onChange: () => { if (!this.suppressInput) this.schedule(); },
     });
     this.out = createEditor(this.dom.editorOut, {
       doc: '',
@@ -229,6 +247,7 @@ export class AppController {
     this.decorateSelects();
 
     this.bindEvents();
+    this.applySplit(this.splitRatio);
     this.renderTabs();
     if (initialInput) this.run(initialInput);
     else this.renderEmpty();
@@ -277,7 +296,9 @@ export class AppController {
   /** 读取界面偏好；超时或失败都按默认值继续，不影响已就绪的 UI */
   private async applyPrefsWhenReady(): Promise<void> {
     const fallback: Prefs = {};
+    const revision = this.prefsRevision;
     const prefs = await withTimeout(loadPrefs(), 1500, fallback);
+    if (revision !== this.prefsRevision) return;
 
     // FR-L3 优先级：**历史偏好覆盖默认值**。
     // 首次安装 / 清数据 → 保持「格式化」；此后 → 上次离开的 tab。
@@ -291,6 +312,7 @@ export class AppController {
     }
     // v1.3.1：引导条只提示一次，关过就不再打扰
     if (prefs.hintWidth !== undefined) this.hintWidthDismissed = prefs.hintWidth;
+    if (typeof prefs.splitRatio === 'number' && Number.isFinite(prefs.splitRatio)) this.applySplit(prefs.splitRatio);
     this.syncWidthHint();
     this.renderTabs();
     this.syncTabControls();
@@ -325,6 +347,14 @@ export class AppController {
     ];
     for (const [btn, id] of tabBtns) {
       btn?.addEventListener('click', () => this.switchTab(id));
+      btn?.addEventListener('keydown', (e) => {
+        const index = TAB_ORDER.indexOf(id);
+        const next = e.key === 'ArrowRight' ? (index + 1) % 3 : e.key === 'ArrowLeft' ? (index + 2) % 3 : e.key === 'Home' ? 0 : e.key === 'End' ? 2 : -1;
+        if (next < 0) return;
+        e.preventDefault();
+        this.switchTab(TAB_ORDER[next]);
+        tabBtns[next][0]?.focus();
+      });
     }
 
     // FR-A17：目标格式选择器（O-6：与来源选择器对称，来源 → 目标）
@@ -408,11 +438,18 @@ export class AppController {
     this.bindSplitterKeys();
 
     // 修正提示条：点击摘要区展开/收起明细（FR-D5）
+    this.dom.fixbar.tabIndex = 0;
+    this.dom.fixbar.setAttribute('role', 'button');
+    this.dom.fixbar.setAttribute('aria-expanded', 'false');
+    this.dom.fixbar.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.dom.fixbar.click(); }
+    });
     this.dom.fixbar.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
       // 明细区内的点击不收起，避免用户想选中文本时误触
       if (target.closest('.fixbar__detail')) return;
-      this.dom.fixbar.classList.toggle('fixbar--open');
+      const open = this.dom.fixbar.classList.toggle('fixbar--open');
+      this.dom.fixbar.setAttribute('aria-expanded', String(open));
     });
   }
 
@@ -423,9 +460,25 @@ export class AppController {
       this.endBoot();
       return;
     }
+    if (this.timer) window.clearTimeout(this.timer);
+    this.workspaces[this.tab] = {
+      input: this.in.getDoc(), locked: this.locked, overrides: [...this.panel.overrides()],
+      strippedPrefix: this.strippedPrefix, lastGoodOutput: this.lastGoodOutput, lastGoodLang: this.lastGoodLang,
+    };
     this.tab = id;
+    const workspace = this.workspaces[id];
+    this.suppressInput = true;
+    try { this.in.setDoc(workspace?.input ?? ''); } finally { this.suppressInput = false; }
+    this.setLocked(workspace?.locked ?? null);
+    this.panel.clear();
+    for (const [path, type] of workspace?.overrides ?? []) this.panel.setOverride(path, type);
+    this.state = null;
+    this.escapeOutput = '';
+    this.lastGoodOutput = workspace?.lastGoodOutput ?? '';
+    this.lastGoodLang = workspace?.lastGoodLang ?? 'json';
     // 换 tab 即作废「已确认剥离的前缀」——它是针对上一次输入的决定
-    this.strippedPrefix = '';
+    this.strippedPrefix = workspace?.strippedPrefix ?? '';
+    this.clearPrefixHint();
     this.endBoot();
     this.renderTabs();
     this.syncTabControls();
@@ -445,6 +498,7 @@ export class AppController {
       const on = id === this.tab;
       btn.classList.toggle('tab--on', on);
       btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      btn.tabIndex = on ? 0 : -1;
     }
     this.syncChannel();
     this.syncTabControls();
@@ -498,6 +552,9 @@ export class AppController {
       this.dom.btnFormat.textContent = this.strict ? '档位：严格' : '档位：容错';
       this.dom.btnCompact.textContent = this.compact ? '缩进：压缩' : '缩进：美化';
     }
+    for (const select of this.selects) select.sync();
+    const arrow = this.dom.root?.querySelector<HTMLElement>('.detectbar__arrow');
+    if (arrow) arrow.hidden = isFormat || isEscape;
   }
 
   /** FR-K2：格式化 tab 的严格/容错档位切换 */
@@ -530,13 +587,16 @@ export class AppController {
 
   /** 统一维护「手动锁定」状态与判定条标记（FR-B5/B7/B10） */
   private setLocked(v: SourceFormat | null): void {
+    this.prefsRevision++;
     this.locked = v;
     this.dom.lockBadge.hidden = v === null;
     this.dom.resetAuto.hidden = v === null;
   }
 
   private async persist(): Promise<void> {
+    this.prefsRevision++;
     await savePrefs({
+      splitRatio: this.splitRatio,
       compact: this.compact,
       tab: this.tab,
       target: this.target,
@@ -547,23 +607,46 @@ export class AppController {
   }
 
   private schedule(): void {
+    this.prefsRevision++;
+    if (this.timer) window.clearTimeout(this.timer);
+    this.timer = undefined;
+    this.strippedPrefix = '';
+    this.clearPrefixHint();
+    this.clearSuggestion();
+    this.state = null;
+    this.escapeOutput = '';
+    this.setButtons(false);
+    this.dom.staleBadge.hidden = !this.lastGoodOutput;
+    this.dom.editorOut.classList.toggle('is-stale', !!this.lastGoodOutput);
     const text = this.in.getDoc();
-    const chars = [...text].length;
-    // FR-G4：> 500,000 关闭实时转换
+    const chars = computeStats(text).chars;
+    if (!text.trim()) {
+      this.panel.clear();
+      this.setLocked(null);
+    }
+    // CodeMirror 的更新回调不能同步发起第二次编辑器更新。
+    queueMicrotask(() => {
+      if (this.in.getDoc() !== text) return;
+      this.in.setHighlight(chars <= T1);
+      this.out.setHighlight(chars <= T1);
+    });
     if (chars > T2) {
       this.setStatus('文本过大，已关闭实时转换，请点「转换」');
       return;
     }
-    // FR-G3：100,001–500,000 防抖 300ms 且关闭高亮
-    const delay = chars > T1 ? 300 : 200;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => this.run(text), delay);
+    this.setStatus('待处理');
+    this.timer = window.setTimeout(() => this.run(this.in.getDoc()), chars > T1 ? 300 : 200);
   }
 
   /** 执行一次处理：按当前 tab 分派到对应链路（FR-L1 / FR-L4） */
   run(text: string): void {
+    if (this.timer) window.clearTimeout(this.timer);
+    this.timer = undefined;
     if (text.trim() === '') {
       this.state = null;
+      this.escapeOutput = '';
+      this.lastGoodOutput = '';
+      this.strippedPrefix = '';
       this.renderEmpty();
       return;
     }
@@ -579,6 +662,7 @@ export class AppController {
     this.dom.root?.classList.toggle('is-lite', !highlightOn);
 
     if (this.tab === 'escape') {
+      this.clearPrefixHint();
       this.runEscape(text);
       return;
     }
@@ -602,14 +686,17 @@ export class AppController {
     // 更新判定条
     this.dom.fmtLabel.textContent = FORMAT_TEXT[result.source];
     this.dom.fmtSelect.value = result.source;
+    for (const select of this.selects) select.sync();
 
     // 编辑器语言随输出方向切换
     this.out.setLang(result.outputLang);
 
     if (result.status === 'error') {
       // FR-D6/D7：高亮出错行 + 保留上一次成功结果置灰 + 禁用复制/下载
+      this.dom.typePanel.hidden = true;
+      if (result.ir) this.renderTypePanel(result);
       this.out.setDoc(this.lastGoodOutput);
-      this.dom.staleBadge.hidden = false;
+      this.dom.staleBadge.hidden = !this.lastGoodOutput;
       this.dom.editorOut.classList.add('is-stale');
       this.setButtons(false);
       const e = result.error;
@@ -623,12 +710,20 @@ export class AppController {
     }
 
     if (result.status === 'timeout') {
+      this.out.setDoc(this.lastGoodOutput);
+      this.dom.staleBadge.hidden = !this.lastGoodOutput;
+      this.dom.editorOut.classList.toggle('is-stale', !!this.lastGoodOutput);
+      this.dom.typePanel.hidden = true;
+      this.clearPrefixHint();
+      this.clearSuggestion();
+      this.setFixbar(null, result);
       this.setStatus('转换超时，建议用放大页面或拆分文本', 'error');
       this.setButtons(false);
       return;
     }
 
     // 成功路径：清除失败态（AC-23 —— 用户补齐后角标移除、按钮解禁）
+    this.panel.retain(new Set(result.values.map((value) => value.path)));
     this.lastGoodOutput = result.output;
     this.lastGoodLang = result.outputLang;
     this.out.setDoc(result.output);
@@ -644,7 +739,7 @@ export class AppController {
     if (result.fallbackFrom) {
       this.setStatus(`已按 ${FORMAT_TEXT[result.source]} 格式解析`);
     } else {
-      this.setStatus('');
+      this.setStatus(result.fixes.length ? `已修正 · ${FORMAT_TEXT[result.outputLang]}` : `已完成 · ${FORMAT_TEXT[result.outputLang]}`);
     }
 
     this.clearSuggestion();
@@ -667,8 +762,9 @@ export class AppController {
 
     if (!res.ok) {
       // FR-I3：失败不返回部分结果，保留旧输出置灰 + 禁用复制/下载
+      this.dom.typePanel.hidden = true;
       this.out.setDoc(this.lastGoodOutput);
-      this.dom.staleBadge.hidden = false;
+      this.dom.staleBadge.hidden = !this.lastGoodOutput;
       this.dom.editorOut.classList.add('is-stale');
       this.setButtons(false);
       this.setStatus(res.error ?? '转义失败', 'error');
@@ -687,7 +783,7 @@ export class AppController {
     this.setButtons(true);
     this.setFixbar(null, { duplicates: undefined } as unknown as ConvertResult);
     // FR-I6：剥了外层引号必须说出来，让操作可追溯
-    this.setStatus(res.note ?? '');
+    this.setStatus(res.note ?? '已完成');
     this.clearSuggestion();
     this.dom.typePanel.hidden = true;
     this.updateStats(text, res.output);
@@ -700,22 +796,7 @@ export class AppController {
       return;
     }
     this.panel.render(this.dom.typePanel, r, () => {
-      // FR-C7：改类型后重渲染输出，不重新解析输入。
-      // 必须同步更新 this.state —— 否则「复制/下载」取的还是改类型前的旧输出，
-      // 用户看到的新输出与复制出去的内容不一致（AC-39 的精神：以 IR 结果为准）。
-      if (!this.state?.ir) return;
-      const re = convert(this.in.getDoc(), {
-        force: this.locked,
-        compact: this.compact,
-        overrides: this.panel.overrides(),
-      });
-      if (re.status !== 'error' && re.status !== 'timeout') {
-        this.state = re;
-        this.lastGoodOutput = re.output;
-        this.lastGoodLang = re.outputLang;
-        this.out.setDoc(re.output);
-        this.updateStats(this.in.getDoc(), re.output);
-      }
+      this.run(this.in.getDoc());
     });
   }
 
@@ -840,8 +921,8 @@ export class AppController {
     // FR-E8：无有效输出时全部禁用；失败态仅「转换」可用（FR-D7）
     this.dom.btnCopy.disabled = !enabled;
     this.dom.btnDownload.disabled = !enabled;
-    this.dom.btnFormat.disabled = !enabled;
-    this.dom.btnCompact.disabled = !enabled;
+    this.dom.btnFormat.disabled = false;
+    this.dom.btnCompact.disabled = false;
     this.dom.btnConvert.disabled = false;
     this.dom.btnDownload.textContent =
       this.tab === 'escape' ? '下载 .txt' : downloadLabel(this.lastGoodLang);
@@ -872,6 +953,7 @@ export class AppController {
     this.dom.fixbar.hidden = true;
     this.dom.typePanel.hidden = true;
     this.clearSuggestion();
+    this.clearPrefixHint();
     this.updateStats('', '');
   }
 
@@ -902,35 +984,61 @@ export class AppController {
       this.setStatus(res.message);
     } else {
       // FR-E6：失败时全选输出区，引导手动复制
-      this.out.setEditable(true);
-      const el = this.dom.editorOut.querySelector('.cm-content') as HTMLElement | null;
-      if (el) selectAllIn(el);
+      this.out.view.dispatch({ selection: { anchor: 0, head: this.out.view.state.doc.length } });
+      this.out.view.focus();
       this.setStatus(res.message, 'error');
     }
   }
 
   /** C-1 / FR-F6：window.open，不用 chrome.tabs.create（AC-49 禁令） */
   private async handleEnlarge(): Promise<void> {
-    await writeSession({
-      input: this.in.getDoc(),
-      source: this.state?.source,
-      locked: this.locked !== null,
-      compact: this.compact,
-      overrides: [...this.panel.overrides().entries()],
-      // O-9：不带这三个，放大页会跳回默认 tab
-      tab: this.tab,
-      target: this.target,
-      strict: this.strict,
-      escapeStyle: this.escapeStyle,
-      escapeDir: this.escapeDir,
-    });
-    window.open(chrome.runtime.getURL('app.html'), '_blank');
+    if (this.enlarging) return;
+    this.enlarging = true;
+    if (this.dom.enlarge) this.dom.enlarge.disabled = true;
+    const sessionId = crypto.randomUUID();
+    const workspaces: Record<string, WorkspaceState> = {};
+    for (const [id, workspace] of Object.entries(this.workspaces)) {
+      workspaces[id] = { input: workspace.input, source: workspace.locked ?? undefined, locked: !!workspace.locked, overrides: workspace.overrides, strippedPrefix: workspace.strippedPrefix };
+    }
+    try {
+      const written = await writeSession({
+        workspaces,
+        strippedPrefix: this.strippedPrefix,
+        input: this.in.getDoc(),
+        source: this.locked ?? this.state?.source,
+        locked: this.locked !== null,
+        compact: this.compact,
+        overrides: [...this.panel.overrides().entries()],
+        // O-9：不带这三个，放大页会跳回默认 tab
+        tab: this.tab,
+        target: this.target,
+        strict: this.strict,
+        escapeStyle: this.escapeStyle,
+        escapeDir: this.escapeDir,
+      }, sessionId);
+      if (!written) {
+        this.setStatus('会话交接失败，请重试；当前输入已保留', 'error');
+        return;
+      }
+      const opened = window.open(chrome.runtime.getURL('app.html') + '#' + sessionId, '_blank');
+      if (!opened) {
+        await discardSession(sessionId);
+        this.setStatus('标签页未能打开，当前输入已保留', 'error');
+        return;
+      }
 
-    // v1.3.1：新开标签页后必须关掉侧边栏，否则屏幕上同时存在两个扩展实例，
-    // 侧边栏那份还白占 320~360px（用户实测反馈的问题 2）。
-    // tab 形态本来就是整屏，没有面板可关。
-    if (this.opts.surface === 'panel') {
-      await closeSidePanel();
+      // v1.3.1：新开标签页后必须关掉侧边栏，否则屏幕上同时存在两个扩展实例，
+      // 侧边栏那份还白占 320~360px（用户实测反馈的问题 2）。
+      // tab 形态本来就是整屏，没有面板可关。
+      if (this.opts.surface === 'panel') {
+        await closeSidePanel();
+      }
+    } catch {
+      await discardSession(sessionId);
+      this.setStatus('标签页交接失败，当前输入已保留', 'error');
+    } finally {
+      this.enlarging = false;
+      if (this.dom.enlarge) this.dom.enlarge.disabled = false;
     }
   }
 
@@ -966,7 +1074,13 @@ export class AppController {
     if (!inPane) return;
     const clamped = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, ratio));
     const containerH = container?.clientHeight ?? 0;
-    inPane.style.setProperty('flex', String(0.5 + clamped));
+    this.splitRatio = clamped;
+    inPane.style.setProperty('flex', String(clamped));
+    const outPane = container?.querySelector<HTMLElement>('.pane--out');
+    outPane?.style.setProperty('flex', String(1 - clamped));
+    splitter.setAttribute('aria-valuemin', String(SPLIT_MIN * 100));
+    splitter.setAttribute('aria-valuemax', String(SPLIT_MAX * 100));
+    splitter.setAttribute('aria-valuenow', String(clamped * 100));
     // 容器高度未知（jsdom / 首帧）时不写死 minHeight，避免 0 高度锁死布局
     if (containerH > 0) {
       inPane.style.setProperty(
@@ -983,6 +1097,8 @@ export class AppController {
     if (!inPane) return;
     inPane.style.removeProperty('flex');
     inPane.style.removeProperty('min-height');
+    const outPane = splitter?.parentElement?.querySelector<HTMLElement>('.pane--out');
+    outPane?.style.removeProperty('flex');
   }
 
   private startDrag(e: PointerEvent): void {
@@ -991,13 +1107,16 @@ export class AppController {
     splitter.classList.add('is-dragging');
     const container = splitter.parentElement as HTMLElement;
     const startY = e.clientY;
+    const startRatio = this.splitRatio;
     const rect = container.getBoundingClientRect();
     // rect.height 在 jsdom 中恒为 0，必须有兜底，否则 ratio 恒为 0
-    const span = rect.height || container.clientHeight || 0;
-    let last = 0.5;
+    const inHeight = container.querySelector('.pane--in')?.getBoundingClientRect().height ?? 0;
+    const outHeight = container.querySelector('.pane--out')?.getBoundingClientRect().height ?? 0;
+    const span = inHeight + outHeight || rect.height || container.clientHeight || 0;
+    let last = startRatio;
     const move = (ev: PointerEvent) => {
       const dy = ev.clientY - startY;
-      last = span > 0 ? Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, dy / span)) : 0.5;
+      last = span > 0 ? Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, startRatio + dy / span)) : startRatio;
       this.applySplit(last);
     };
     const up = () => {
@@ -1005,6 +1124,7 @@ export class AppController {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
+      void this.persist();
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -1018,21 +1138,15 @@ export class AppController {
   private bindSplitterKeys(): void {
     const splitter = this.dom.splitter;
     if (!splitter) return;
-    const read = (): number => {
-      const inPane = splitter.parentElement?.querySelector('.pane--in') as HTMLElement | null;
-      const flex = inPane?.style.getPropertyValue('flex');
-      const parsed = flex ? Number.parseFloat(flex) : Number.NaN;
-      return Number.isFinite(parsed) ? parsed - 0.5 : 0.5;
-    };
     splitter.addEventListener('keydown', (e) => {
-      const cur = read();
+      const cur = this.splitRatio;
       let next: number | null = null;
       switch (e.key) {
         case 'ArrowUp':
-          next = cur + SPLIT_STEP;
+          next = cur - SPLIT_STEP;
           break;
         case 'ArrowDown':
-          next = cur - SPLIT_STEP;
+          next = cur + SPLIT_STEP;
           break;
         case 'Home':
           next = SPLIT_MIN;
@@ -1045,11 +1159,14 @@ export class AppController {
       }
       e.preventDefault();
       this.applySplit(next);
+      void this.persist();
     });
   }
 
   /** 供放大页与外部驱动（自动化测试）写入输入内容 */
   setInput(text: string): void {
+    this.prefsRevision++;
+    if (!text.trim()) { this.panel.clear(); this.setLocked(null); }
     this.in.setDoc(text);
     this.run(text);
   }
@@ -1069,6 +1186,7 @@ export class AppController {
 
   /** 程序化设置目标格式（FR-A17），供测试与放大页继承驱动 */
   setTarget(t: TargetFormat | 'auto'): void {
+    this.prefsRevision++;
     this.target = t;
     if (this.dom.targetSelect) this.dom.targetSelect.value = t;
     this.run(this.in.getDoc());
@@ -1076,6 +1194,7 @@ export class AppController {
 
   /** 程序化设置转义风格与方向（FR-I2 / FR-I5），供测试驱动 */
   setEscape(style: EscapeStyle, dir?: EscapeDir): void {
+    this.prefsRevision++;
     this.escapeStyle = style;
     if (dir) this.escapeDir = dir;
     if (this.dom.escapeStyleSelect) this.dom.escapeStyleSelect.value = style;

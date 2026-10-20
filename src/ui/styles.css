@@ -663,7 +663,8 @@ body {
   white-space: nowrap;
 }
 
-.sel__opt:hover {
+.sel__opt:hover,
+.sel__opt--active {
   background: color-mix(in srgb, var(--signal) 12%, transparent);
 }
 

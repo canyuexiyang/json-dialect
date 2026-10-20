@@ -93,7 +93,6 @@ function execCommandCopy(text: string): boolean {
 
 /** ③ 失败时：把目标元素内容全选，便于用户手动复制（FR-E6） */
 export function selectAllIn(el: HTMLElement): void {
-  el.setAttribute('contenteditable', 'true');
   el.focus();
   const range = document.createRange();
   range.selectNodeContents(el);

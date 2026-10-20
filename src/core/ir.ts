@@ -15,7 +15,7 @@ export interface Span {
 
 export type JVal =
   | { k: 'obj'; entries: Array<{ key: JVal; val: JVal }>; span: Span }
-  | { k: 'arr'; items: JVal[]; span: Span }
+  | { k: 'arr'; items: JVal[]; span: Span; tuple?: boolean }
   | { k: 'str'; value: string; span: Span }
   | { k: 'num'; raw: string; span: Span }
   | { k: 'bool'; value: boolean; span: Span }
@@ -54,8 +54,9 @@ export const EMPTY_SPAN: Span = { start: 0, end: 0, line: 1, col: 0 };
 export type ValueType = 'string' | 'number' | 'boolean' | 'null' | 'infer';
 
 /** 结构路径（评审 D-7）："/user/age"、"/tags/0"、"/list/2/name" */
-export function makePath(parent: string, seg: string | number): string {
-  return parent + '/' + String(seg);
+export function makePath(parent: string, seg: string | number, occurrence = 0): string {
+  const escaped = String(seg).replace(/~/g, '~0').replace(/\//g, '~1').replace(/#/g, '~2');
+  return parent + '/' + escaped + (occurrence > 0 ? '#' + occurrence : '');
 }
 
 /** 取对象键的字符串表示；非字符串键按 FR-A16 转换 */

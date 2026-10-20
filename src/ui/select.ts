@@ -23,10 +23,12 @@ const CARET = '<svg class="sel__caret" viewBox="0 0 12 12" aria-hidden="true"><p
 
 /** 页面上已打开的下拉（同时只允许一个） */
 let openInstance: SelectHandle | null = null;
+let nextSelectId = 0;
 
 export interface SelectHandle {
   /** 关闭菜单 */
   close(): void;
+  sync(): void;
   /** 触发器按键（供外部读取尺寸等） */
   readonly trigger: HTMLButtonElement;
   /** 被装饰的原始 select */
@@ -65,7 +67,10 @@ export function decorateSelect(
     '<span class="sel__value"></span>' +
     CARET;
 
+  const selectId = ++nextSelectId;
   const menu = document.createElement('ul');
+  menu.id = `select-menu-${selectId}`;
+  trigger.setAttribute('aria-controls', menu.id);
   menu.className = 'sel__menu';
   menu.setAttribute('role', 'listbox');
   menu.hidden = true;
@@ -78,6 +83,8 @@ export function decorateSelect(
   const valueEl = trigger.querySelector('.sel__value') as HTMLElement;
 
   /** 渲染菜单项（值变化后需重绘以更新选中态） */
+  let active = 0;
+
   function renderOptions(): void {
     menu.innerHTML = '';
     const opts = Array.from(native.options);
@@ -88,6 +95,7 @@ export function decorateSelect(
       li.dataset.value = opt.value;
       li.textContent = opt.textContent ?? opt.value;
       li.setAttribute('aria-selected', opt.value === native.value ? 'true' : 'false');
+      li.id = `select-option-${selectId}-${menu.children.length}`;
       li.addEventListener('click', () => choose(opt.value));
       menu.appendChild(li);
     }
@@ -114,7 +122,9 @@ export function decorateSelect(
   function open(): void {
     if (openInstance && openInstance !== handle) openInstance.close();
     renderOptions();
+    active = Math.max(0, native.selectedIndex);
     menu.hidden = false;
+    highlightOption();
     wrap.classList.add('sel--on');
     trigger.setAttribute('aria-expanded', 'true');
     openInstance = handle;
@@ -126,6 +136,7 @@ export function decorateSelect(
     menu.hidden = true;
     wrap.classList.remove('sel--on');
     trigger.setAttribute('aria-expanded', 'false');
+    trigger.removeAttribute('aria-activedescendant');
     if (openInstance === handle) openInstance = null;
     document.removeEventListener('pointerdown', onDocDown, true);
   }
@@ -141,11 +152,32 @@ export function decorateSelect(
     else close();
   });
 
+  function highlightOption(): void {
+    const options = Array.from(menu.children) as HTMLElement[];
+    options.forEach((option, index) => option.classList.toggle('sel__opt--active', index === active));
+    const option = options[active];
+    if (option) trigger.setAttribute('aria-activedescendant', option.id);
+  }
+
   trigger.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' || e.key === 'Tab') {
       close();
-      trigger.focus();
+      if (e.key === 'Escape') { e.preventDefault(); trigger.focus(); }
+      return;
     }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', ' '].includes(e.key)) return;
+    e.preventDefault();
+    if (e.key === 'Enter' || e.key === ' ') {
+      if (menu.hidden) open();
+      else { choose(native.options[active].value); trigger.focus(); }
+      return;
+    }
+    if (menu.hidden) open();
+    if (e.key === 'ArrowDown') active = (active + 1) % native.options.length;
+    if (e.key === 'ArrowUp') active = (active - 1 + native.options.length) % native.options.length;
+    if (e.key === 'Home') active = 0;
+    if (e.key === 'End') active = native.options.length - 1;
+    highlightOption();
   });
 
   // 原生 select 被程序化改写值（控制器：targetSelect.value = t）时同步显示
@@ -163,6 +195,7 @@ export function decorateSelect(
 
   const handle: SelectHandle = {
     close,
+    sync: syncLabel,
     trigger,
     native,
     destroy() {

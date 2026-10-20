@@ -31,8 +31,7 @@ async function closeViaApi(): Promise<boolean> {
     const windowId = win?.id;
     if (!windowId) return false;
 
-    await withTimeout(chrome.sidePanel.close({ windowId }), 1200, undefined);
-    return true;
+    return await withTimeout(chrome.sidePanel.close({ windowId }).then(() => true), 1200, false);
   } catch {
     // 权限缺失 / 上下文失效 / 面板已关闭 → 交给兜底
     return false;

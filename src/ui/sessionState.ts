@@ -5,7 +5,17 @@
  * 读取后立即清除。绝不使用 URL query（长度限制）或 storage.local（违反 FR-H4）。
  */
 
+export interface WorkspaceState {
+  input: string;
+  source?: string;
+  locked?: boolean;
+  overrides?: Array<[string, string]>;
+  strippedPrefix?: string;
+}
+
 export interface SessionState {
+  workspaces?: Record<string, WorkspaceState>;
+  strippedPrefix?: string;
   input: string;
   source?: string;
   locked?: boolean;
@@ -22,12 +32,20 @@ export interface SessionState {
 const KEY = 'json-dialect-session';
 
 /** 写入会话态（弹窗 → 放大页） */
-export async function writeSession(state: SessionState): Promise<void> {
+export async function writeSession(state: SessionState, id?: string): Promise<boolean> {
   try {
-    if (!chrome?.storage?.session) return;
-    await chrome.storage.session.set({ [KEY]: state });
+    if (!chrome?.storage?.session) return false;
+    const key = id ? `${KEY}:${id}` : KEY;
+    let abandoned = false;
+    const pending = chrome.storage.session.set({ [key]: state }).then(async () => {
+      if (abandoned) { await discardSession(id); return false; }
+      return true;
+    });
+    const ok = await withTimeout(pending, 1500, false);
+    abandoned = !ok;
+    return ok;
   } catch {
-    // storage.session 不可用时静默失败，放大页退化为空白启动
+    return false;
   }
 }
 
@@ -67,19 +85,30 @@ export function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<
 }
 
 /** 读取并立即清除（FR-H7） */
-export async function consumeSession(): Promise<SessionState | null> {
+export async function consumeSession(id?: string): Promise<SessionState | null> {
   try {
     if (!chrome?.storage?.session) return null;
-    const got = await withTimeout(chrome.storage.session.get(KEY), 1500, null);
-    const val = (got as Record<string, SessionState | undefined> | null)?.[KEY];
+    const key = id ? `${KEY}:${id}` : KEY;
+    const got = await withTimeout(chrome.storage.session.get(key), 1500, null);
+    const val = (got as Record<string, SessionState | undefined> | null)?.[key];
     if (val) {
-      await withTimeout(chrome.storage.session.remove(KEY), 1000, undefined);
+      await withTimeout(chrome.storage.session.remove(key), 1000, undefined);
       return val;
     }
   } catch {
     // ignore
   }
   return null;
+}
+
+/** 打开失败或迟到写入时清除未消费的会话，失败不会影响原页面。 */
+export async function discardSession(id?: string): Promise<void> {
+  try {
+    const key = id ? `${KEY}:${id}` : KEY;
+    await withTimeout(chrome.storage.session.remove(key), 1000, undefined);
+  } catch {
+    // 会话仍只存在于浏览器内存中。
+  }
 }
 
 /**
@@ -124,7 +153,7 @@ export async function loadPrefs(): Promise<Prefs> {
 export async function savePrefs(p: Prefs): Promise<void> {
   try {
     if (!chrome?.storage?.local) return;
-    await chrome.storage.local.set({ [PREF_KEY]: p });
+    await withTimeout(chrome.storage.local.set({ [PREF_KEY]: p }), 1500, undefined);
   } catch {
     // ignore
   }

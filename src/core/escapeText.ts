@@ -119,7 +119,7 @@ function javaEncode(s: string): string {
 }
 
 function javaDecode(s: string): string {
-  return decodeStringBody(s);
+  return decodeStringBody(s, 'java');
 }
 
 /**

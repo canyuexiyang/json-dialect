@@ -17,7 +17,7 @@ import type { InheritedState } from './controller.js';
 const SESSION_TIMEOUT_MS = 2000;
 
 async function main(): Promise<void> {
-  const session = await withTimeout(consumeSession(), SESSION_TIMEOUT_MS, null); // 读后立即清除（FR-H7）
+  const session = await withTimeout(consumeSession(location.hash.slice(1) || undefined), SESSION_TIMEOUT_MS, null); // 读后立即清除（FR-H7）
 
   // 同步段优先：先把编辑器建起来，继承值迟到不影响可用性
   const app = new AppController(mountShell('tab'), { surface: 'tab' });
@@ -28,6 +28,8 @@ async function main(): Promise<void> {
 /** SessionState（storage 侧，值均为 string）→ InheritedState（控制器侧，收窄类型） */
 function toInherited(session: NonNullable<Awaited<ReturnType<typeof consumeSession>>>): InheritedState {
   return {
+    workspaces: session.workspaces,
+    strippedPrefix: session.strippedPrefix,
     source: session.source,
     locked: session.locked,
     compact: session.compact,

@@ -284,7 +284,7 @@ it('方向键可微调输入区高度（tabindex 早已存在但此前无监听�
     expect(Number.isFinite(afterDown)).toBe(true);
 
     dom.splitter!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
-    expect(readFlexGrow(inPane)).toBeGreaterThan(afterDown);
+    expect(readFlexGrow(inPane)).toBeLessThan(afterDown);
   });
 
   it('比例被钳制在 0.2~0.8，不会把输出区压没', async () => {
@@ -296,8 +296,8 @@ it('方向键可微调输入区高度（tabindex 早已存在但此前无监听�
         new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
       );
     }
-    // flex-grow = 0.5 + ratio，ratio 下限 0.2
-    expect(readFlexGrow(inPane)).toBeCloseTo(0.7, 5);
+    // 输入与输出的 flex-grow 分别等于比例与其补数，向下到上限 0.8
+    expect(readFlexGrow(inPane)).toBeCloseTo(0.8, 5);
   });
 
   it('Home / End 直达两端', async () => {
@@ -305,9 +305,9 @@ it('方向键可微调输入区高度（tabindex 早已存在但此前无监听�
     await app.init();
     const inPane = inPaneOf(dom);
     dom.splitter!.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
-    expect(readFlexGrow(inPane)).toBeCloseTo(1.3, 5);
+    expect(readFlexGrow(inPane)).toBeCloseTo(0.8, 5);
     dom.splitter!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
-    expect(readFlexGrow(inPane)).toBeCloseTo(0.7, 5);
+    expect(readFlexGrow(inPane)).toBeCloseTo(0.2, 5);
   });
 
   it('容器高度已知时写入 min-height 兜底', async () => {

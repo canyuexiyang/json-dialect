@@ -9,8 +9,8 @@
  */
 
 import type { JVal, ObjEntry, Span } from '../ir.js';
-import { keyToString } from '../ir.js';
-import { stripLeadingZeros } from '../escape.js';
+import { keyToString, makePath } from '../ir.js';
+import { normalizeNumber, decodeStringBody } from '../escape.js';
 import type { Mark, Token } from '../lexer.js';
 import type { SourceFormat } from '../types.js';
 import { Deadline, ParseError, errAt } from '../errors.js';
@@ -95,7 +95,13 @@ export function parseValue(
   toks: Token[],
   opts: ParseOptions,
 ): ParseOut {
-  const c = new Cursor(toks);
+  if (opts.strict && opts.fmt === 'json') {
+    const comment = toks.find((t) => t.type === 'comment');
+    if (comment) throw errAt('unexpected_token', comment, 'JSON 不支持注释');
+    const whitespace = toks.find((t) => t.type === 'ws' && /[^ \t\r]/.test(t.raw));
+    if (whitespace) throw errAt('unexpected_char', whitespace, 'JSON 空白字符无效');
+  }
+  const c = new Cursor(toks.filter((t) => t.type !== 'ws' && t.type !== 'comment'));
   const marks: Mark[] = [];
   const values: ValueSlot[] = [];
   const maxDepth = opts.maxDepth ?? MAX_DEPTH_DEFAULT;
@@ -112,19 +118,19 @@ export function parseValue(
   };
 
   function collect(node: JVal, path: string): void {
+    opts.deadline?.check();
     if (node.k === 'obj') {
-      node.entries.forEach((e, idx) => {
+      const counts = new Map<string, number>();
+      node.entries.forEach((e) => {
         const key = keyToString(e.key);
-        const child = `${path}/${key}`;
-        collect(e.val, child);
-        // 同名键在路径上加序号区分
-        const dupCount = node.entries.slice(0, idx).filter((x) => keyToString(x.key) === key).length;
-        if (dupCount > 0) collect(e.val, `${child}#${dupCount}`);
+        const occurrence = counts.get(key) ?? 0;
+        counts.set(key, occurrence + 1);
+        collect(e.val, makePath(path, key, occurrence));
       });
       return;
     }
     if (node.k === 'arr') {
-      node.items.forEach((it, idx) => collect(it, `${path}/${idx}`));
+      node.items.forEach((it, idx) => collect(it, makePath(path, idx)));
       return;
     }
     values.push({
@@ -140,6 +146,43 @@ export function parseValue(
               : 'string',
       raw: node.k === 'num' ? node.raw : node.k === 'str' ? node.value : '',
     });
+  }
+
+  function stringValue(t: Token): string {
+    if (strict && (t.closed === false || t.marks.some((m) => m.type === 'quote_fixed'))) {
+      return die('unclosed_quote', t);
+    }
+    if (strict && !isPy && (t.quote !== '"' || t.triple)) {
+      return die('unclosed_quote', t, 'JSON 字符串应使用双引号');
+    }
+    if (!strict && !isPy && (t.quote !== '"' || t.triple)) {
+      marks.push(mk('quote_normalized', t, t.raw, '双引号字符串'));
+    }
+    if (t.marks.length) marks.push(...t.marks);
+    try {
+      if (strict && !isPy) return JSON.parse(t.raw) as string;
+      return decodeStringBody(t.body ?? t.raw.slice(t.triple ? 3 : 1, t.closed === false ? undefined : t.triple ? -3 : -1), isPy ? 'python' : 'json', strict, opts.deadline);
+    } catch (e) {
+      if (e instanceof Error && e.name === 'TimeoutError') throw e;
+      return die('bad_value', t, '字符串转义无效');
+    }
+  }
+
+  function numberValue(t: Token): string {
+    const raw = t.numRaw ?? t.raw;
+    if (strict && !isPy && !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(raw)) {
+      return die('bad_value', t, 'JSON 数字格式无效');
+    }
+    if (strict && isPy && /^[+-]?0+[1-9]\d*$/.test(raw)) {
+      return die('bad_value', t, 'Python 整数不能有前导零');
+    }
+    try {
+      const normalized = normalizeNumber(raw);
+      if (!strict && normalized !== raw) marks.push(mk('number_normalized', t, raw, normalized));
+      return normalized;
+    } catch {
+      return die('bad_value', t, '数字格式无效');
+    }
   }
 
   function parseNode(depth: number): JVal {
@@ -181,58 +224,38 @@ export function parseValue(
         let key: JVal;
         if (keyTok.type === 'string') {
           c.next();
-          if (strict && isPy && keyTok.quote === '"') {
-            // JSON 模式下双引号是合法的；Python 模式下也接受（用户可能混用）
-          }
           key = {
             k: 'str',
-            value: keyTok.value ?? '',
+            value: stringValue(keyTok),
             span: spanFrom(keyTok, keyTok),
           };
-          if (keyTok.marks.length) marks.push(...keyTok.marks);
         } else if (keyTok.type === 'ident' || keyTok.type === 'number') {
           // 裸键名（FR-D3：键名补引号）
           if (keyTok.type === 'number') {
             c.next();
-            key = { k: 'num', raw: stripLeadingZeros(keyTok.numRaw ?? keyTok.raw), span: spanFrom(keyTok, keyTok) };
+            if (strict && !isPy) die('bad_value', keyTok, 'JSON 键必须是字符串');
+            key = { k: 'num', raw: numberValue(keyTok), span: spanFrom(keyTok, keyTok) };
             marks.push(mk('nonstring_key', keyTok, keyTok.raw, `"${keyTok.raw}"`));
           } else {
             const w = keyTok.raw;
             // True/False/None/NaN 这类字面量作键：严格模式判非法；
             // 宽松模式按 FR-A16 转为字符串键并记修正（JSON 对象键必须是字符串，
             // 报错不如转字符串 + 显式提示 —— 与 FR-A15/A16 同一取舍原则）。
-            if (TRUE_WORDS.has(w) || FALSE_WORDS.has(w) || NAN_WORDS.has(w) || NULL_WORDS.has(w)) {
-              if (strict) die('missing_colon', keyTok, `键名位置出现字面量 ${w}`);
+            if (isPy && (w === 'True' || w === 'False' || w === 'None')) {
+              c.next();
+              key = w === 'None' ? { k: 'null', span: spanFrom(keyTok, keyTok) } : { k: 'bool', value: w === 'True', span: spanFrom(keyTok, keyTok) };
+              if (!strict) marks.push(mk('nonstring_key', keyTok, w, `"${w}"`));
+            } else {
+              if (strict) die('unexpected_token', keyTok, '键名缺少引号');
+              c.next();
+              key = { k: 'str', value: w, span: spanFrom(keyTok, keyTok) };
+              marks.push(mk('key_quoted', keyTok, w, `'${w}'`));
             }
-            c.next();
-            key = { k: 'str', value: w, span: spanFrom(keyTok, keyTok) };
-            if (strict) die('unexpected_token', keyTok, '键名缺少引号');
-            marks.push(mk('key_quoted', keyTok, w, `'${w}'`));
           }
         } else if (keyTok.type === 'punct' && keyTok.raw === '(') {
-          // 元组键： (1, 2): 'x' （FR-A16）
-          c.next();
-          const items: JVal[] = [];
+          if (strict && !isPy) die('bad_value', keyTok, 'JSON 键必须是字符串');
           const openP = keyTok;
-          let closedP = false;
-          while (!c.eof()) {
-            const q = c.peek();
-            if (q?.type === 'punct' && q.raw === ')') {
-              c.next();
-              closedP = true;
-              break;
-            }
-            if (q?.type === 'punct' && q.raw === ',') {
-              c.next();
-              continue;
-            }
-            items.push(parseNode(depth + 1));
-          }
-          if (!closedP) {
-            if (strict) die('missing_bracket', openP, '元组键缺少右括号');
-            marks.push(mk('bracket_closed', c.peek(-1), '(', ')'));
-          }
-          key = { k: 'arr', items, span: spanFrom(openP, c.peek(-1)) };
+          key = parseNode(depth + 1);
           marks.push(mk('nonstring_key', openP, keyToString(key), `"${keyToString(key)}"`));
         } else {
           return die('unexpected_token', keyTok, '键名位置无效');
@@ -242,9 +265,10 @@ export function parseValue(
         const sep = c.peek();
         if (sep?.type === 'punct' && (sep.raw === ':' || sep.raw === '=')) {
           c.next();
-          if (strict && opts.fmt === 'json' && sep.raw === '=') {
-            die('missing_colon', sep, 'JSON 应使用 : 分隔');
+          if (strict && sep.raw === '=') {
+            die('missing_colon', sep, '应使用 : 分隔');
           }
+          if (sep.raw === '=') marks.push(mk('separator_fixed', sep, '=', ':'));
         } else {
           die('missing_colon', sep, '缺少键值分隔符');
         }
@@ -259,7 +283,7 @@ export function parseValue(
           // 末尾多余逗号：逗号之后紧跟 } （AC-17/AC-18）
           const afterComma = c.peek();
           if (afterComma?.type === 'punct' && afterComma.raw === '}') {
-            if (strict) die('unexpected_token', nx, '多余逗号');
+            if (strict && !isPy) die('unexpected_token', nx, '多余逗号');
             marks.push(mk('trailing_comma', nx, ',', ''));
             c.next();
             closed = true;
@@ -280,7 +304,7 @@ export function parseValue(
         }
         // 缺少逗号但直接跟了下一个键 → 宽松模式放行
         if (!strict) {
-          marks.push(mk('trailing_comma', nx, '', ','));
+          marks.push(mk('missing_comma', nx, '', ','));
           continue;
         }
         die('unexpected_token', nx, '缺少逗号');
@@ -296,9 +320,11 @@ export function parseValue(
     if (t.type === 'punct' && (t.raw === '[' || t.raw === '(')) {
       const open = c.next()!;
       const openCh = t.raw;
+      if (strict && !isPy && openCh === '(') die('unexpected_token', t, 'JSON 不支持元组');
       const closeCh = openCh === '[' ? ']' : ')';
       const items: JVal[] = [];
       let closed = false;
+      let comma = false;
       while (!c.eof()) {
         const p = c.peek();
         if (p?.type === 'punct' && p.raw === closeCh) {
@@ -323,11 +349,12 @@ export function parseValue(
         items.push(parseNode(depth + 1));
         const nx = c.peek();
         if (nx?.type === 'punct' && nx.raw === ',') {
+          comma = true;
           c.next();
           // 末尾多余逗号：逗号之后紧跟闭合符（AC-17/AC-18）
           const afterComma = c.peek();
           if (afterComma?.type === 'punct' && afterComma.raw === closeCh) {
-            if (strict) die('unexpected_token', nx, '多余逗号');
+            if (strict && !isPy) die('unexpected_token', nx, '多余逗号');
             marks.push(mk('trailing_comma', nx, ',', ''));
             c.next();
             closed = true;
@@ -347,7 +374,7 @@ export function parseValue(
           break;
         }
         if (!strict) {
-          marks.push(mk('trailing_comma', nx, '', ','));
+          marks.push(mk('missing_comma', nx, '', ','));
           continue;
         }
         die('unexpected_token', nx, '缺少逗号');
@@ -357,25 +384,20 @@ export function parseValue(
         marks.push(mk('bracket_closed', c.peek(-1), '', closeCh));
       }
       // FR-A5：Python 元组 → JSON 数组（arr 已统一表示）
-      return { k: 'arr', items, span: spanFrom(open, c.peek(-1)) };
+      if (isPy && openCh === '(' && items.length === 1 && !comma) return items[0];
+      return { k: 'arr', items, span: spanFrom(open, c.peek(-1)), ...(isPy && openCh === '(' ? { tuple: true } : {}) };
     }
 
     // ---- 字符串 ----
     if (t.type === 'string') {
       c.next();
-      if (t.marks.length) marks.push(...t.marks);
-      // strict 模式：引号形态不符规范 → 失败
-      if (strict) {
-        if (opts.fmt === 'json' && t.quote === "'") die('unclosed_quote', t, 'JSON 字符串应使用双引号');
-        if (opts.fmt === 'python' && t.quote === '"' && false) die('unclosed_quote', t, '');
-      }
-      return { k: 'str', value: t.value ?? '', span: spanFrom(t, t) };
+      return { k: 'str', value: stringValue(t), span: spanFrom(t, t) };
     }
 
     // ---- 数字 ----
     if (t.type === 'number') {
       c.next();
-      return { k: 'num', raw: stripLeadingZeros(t.numRaw ?? t.raw), span: spanFrom(t, t) };
+      return { k: 'num', raw: numberValue(t), span: spanFrom(t, t) };
     }
 
     // ---- 标识符 ----
@@ -384,14 +406,20 @@ export function parseValue(
       c.next();
       if (TRUE_WORDS.has(w)) {
         if (strict && opts.fmt === 'json' && w !== 'true') die('bad_value', t, 'JSON 布尔应为 true');
+        if (strict && isPy && w !== 'True') die('bad_value', t, 'Python 字面量应为 True');
+        if (!strict && w !== (isPy ? 'True' : 'true')) marks.push(mk('literal_normalized', t, w, isPy ? 'True' : 'true'));
         return { k: 'bool', value: true, span: spanFrom(t, t) };
       }
       if (FALSE_WORDS.has(w)) {
         if (strict && opts.fmt === 'json' && w !== 'false') die('bad_value', t, 'JSON 布尔应为 false');
+        if (strict && isPy && w !== 'False') die('bad_value', t, 'Python 字面量应为 False');
+        if (!strict && w !== (isPy ? 'False' : 'false')) marks.push(mk('literal_normalized', t, w, isPy ? 'False' : 'false'));
         return { k: 'bool', value: false, span: spanFrom(t, t) };
       }
       if (NULL_WORDS.has(w)) {
         if (strict && opts.fmt === 'json' && w !== 'null') die('bad_value', t, 'JSON 空值应为 null');
+        if (strict && isPy && w !== 'None') die('bad_value', t, 'Python 字面量应为 None');
+        if (!strict && w !== (isPy ? 'None' : 'null')) marks.push(mk('literal_normalized', t, w, isPy ? 'None' : 'null'));
         return { k: 'null', span: spanFrom(t, t) };
       }
       if (NAN_WORDS.has(w) || SIGNED_NAN.test(w)) {
@@ -426,5 +454,6 @@ export function parseValue(
   }
 
   collect(root, '');
+  opts.deadline?.check(true);
   return { ir: root, marks, values };
 }

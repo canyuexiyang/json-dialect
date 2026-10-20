@@ -101,12 +101,8 @@ export interface EditorHandle {
   destroy(): void;
 }
 
-const langCompartment = new Compartment();
 const themeCompartment = new Compartment();
 const editableCompartment = new Compartment();
-const highlightCompartment = new Compartment();
-
-const noHighlight: Extension[] = [];
 
 export function createEditor(
   parent: HTMLElement,
@@ -118,6 +114,7 @@ export function createEditor(
     onChange?: (text: string) => void;
   } = {},
 ): EditorHandle {
+  const highlightCompartment = new Compartment();
   const lang = opts.lang ?? 'json';
   const readOnly = opts.readOnly ?? false;
   const dark = opts.dark ?? false;
@@ -127,11 +124,11 @@ export function createEditor(
     errorLineField,
     errorLineDeco,
     errorGutter,
-    langCompartment.of(langExt(lang)),
     themeCompartment.of(dark ? [oneDark] : []),
-    highlightCompartment.of(noHighlight),
+    highlightCompartment.of(langExt(lang)),
     editableCompartment.of([EditorView.editable.of(!readOnly), EditorState.readOnly.of(readOnly)]),
     EditorView.lineWrapping,
+    EditorView.contentAttributes.of({ tabindex: '0' }),
     EditorView.updateListener.of((u) => {
       if (u.docChanged && opts.onChange) {
         opts.onChange(u.state.doc.toString());
@@ -145,7 +142,7 @@ export function createEditor(
   });
 
   let currentLang = lang;
-  let highlightOn = false;
+  let highlightOn = true;
 
   return {
     view,
@@ -166,9 +163,6 @@ export function createEditor(
     setLang(next: EditorLang) {
       if (next === currentLang) return;
       currentLang = next;
-      view.dispatch({
-        effects: langCompartment.reconfigure(langExt(next)),
-      });
       if (highlightOn) {
         view.dispatch({
           effects: highlightCompartment.reconfigure(langExt(next)),
@@ -188,13 +182,10 @@ export function createEditor(
       const total = view.state.doc.lines;
       if (total === 0) return;
       const ln = Math.min(Math.max(line, 1), total);
-      const lineInfo = view.state.doc.line(ln);
       view.dispatch({
         effects: setErrorLine.of(ln),
-        selection: { anchor: lineInfo.from },
       });
-      // 滚动到视野内（大文本时错误行可能在屏幕外）
-      view.dispatch({ effects: EditorView.scrollIntoView(lineInfo.from, { y: 'center' }) });
+
     },
     clearHighlight() {
       view.dispatch({ effects: setErrorLine.of(null) });

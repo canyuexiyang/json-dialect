@@ -9,10 +9,11 @@
  *  → 二次编码："{\"msg\": \"he said \\\"hi\\\"\"}"
  */
 
+import type { Deadline } from '../errors.js';
 import type { JVal } from '../ir.js';
 import { toJson } from './toJson.js';
 import { encodeJsonString } from '../escape.js';
 
-export function toJavaEsc(ir: JVal, opts: { compact?: boolean } = {}): string {
-  return encodeJsonString(toJson(ir, opts));
+export function toJavaEsc(ir: JVal, opts: { compact?: boolean; deadline?: Deadline } = {}): string {
+  return encodeJsonString(toJson(ir, opts), opts.deadline);
 }

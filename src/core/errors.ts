@@ -60,8 +60,8 @@ export class Deadline {
     readonly deadlineAt: number,
     private readonly interval = 4096,
   ) {}
-  check(): void {
-    if (++this.counter % this.interval === 0 && Date.now() > this.deadlineAt) {
+  check(force = false): void {
+    if ((force || ++this.counter % this.interval === 0) && Date.now() > this.deadlineAt) {
       throw new TimeoutError();
     }
   }

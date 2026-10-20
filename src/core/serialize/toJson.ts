@@ -1,3 +1,5 @@
+import type { Deadline } from '../errors.js';
+
 /**
  * IR → 标准 JSON 序列化（FR-E1 2空格缩进 / FR-E3 压缩 / FR-A11 / FR-A7）
  *
@@ -11,6 +13,7 @@ import { encodeJsonString } from '../escape.js';
 export interface SerializeOptions {
   /** true = 压缩成一行；false = 2 空格缩进 */
   compact?: boolean;
+  deadline?: Deadline;
   indent?: number;
 }
 
@@ -20,6 +23,7 @@ export function toJson(ir: JVal, opts: SerializeOptions = {}): string {
   const out: string[] = [];
 
   function walk(node: JVal, depth: number): void {
+    opts.deadline?.check();
     switch (node.k) {
       case 'obj': {
         if (node.entries.length === 0) {
@@ -34,7 +38,7 @@ export function toJson(ir: JVal, opts: SerializeOptions = {}): string {
             if (!compact) out.push('\n');
           }
           if (!compact) out.push(' '.repeat((depth + 1) * step));
-          out.push(encodeJsonString(keyToString(e.key)));
+          out.push(encodeJsonString(keyToString(e.key), opts.deadline));
           out.push(': ');
           walk(e.val, depth + 1);
         });
@@ -68,7 +72,7 @@ export function toJson(ir: JVal, opts: SerializeOptions = {}): string {
         return;
       }
       case 'str':
-        out.push(encodeJsonString(node.value));
+        out.push(encodeJsonString(node.value, opts.deadline));
         return;
       case 'num':
         out.push(node.raw); // FR-A11 原始 token 透传

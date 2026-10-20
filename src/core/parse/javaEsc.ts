@@ -9,11 +9,11 @@
  */
 
 import type { Token } from '../lexer.js';
-import { lex, significant } from '../lexer.js';
+import { lex } from '../lexer.js';
 import { decodeStringBody } from '../escape.js';
 import { parseJson } from './json.js';
 import type { ParseOptions, ParseOut } from './engine.js';
-import { ParseError } from '../errors.js';
+import { ParseError, type Deadline } from '../errors.js';
 
 /** 判断是否呈现 Java 转义字符串特征（§7.1 C-2 结构前提） */
 export function looksLikeJavaEscaped(text: string): boolean {
@@ -23,22 +23,20 @@ export function looksLikeJavaEscaped(text: string): boolean {
   return t.slice(1, -1).includes('\\"');
 }
 
-export function unescapeJavaText(text: string): string {
+export function unescapeJavaText(text: string, deadline?: Deadline): string {
   const t = text.trim();
   if (t.length >= 2 && t[0] === '"' && t[t.length - 1] === '"') {
-    return decodeStringBody(t.slice(1, -1));
+    return decodeStringBody(t.slice(1, -1), 'java', false, deadline);
   }
-  return decodeStringBody(t);
+  return decodeStringBody(t, 'java', false, deadline);
 }
 
 export function parseJavaEsc(toks: Token[], opts: Omit<ParseOptions, 'fmt'>): ParseOut {
-  const raw = significant(toks)
-    .map((t) => t.raw)
-    .join('');
+  const raw = opts.rawText ?? toks.map((t) => t.raw).join('');
   if (opts.strict && !looksLikeJavaEscaped(raw)) {
     throw new ParseError('unexpected_char', 1, 0, '不是整段包裹的 Java 转义字符串');
   }
-  const inner = unescapeJavaText(raw);
-  const innerToks = lex(inner).tokens.filter((t) => t.type !== 'ws');
+  const inner = unescapeJavaText(raw, opts.deadline);
+  const innerToks = lex(inner, { deadline: opts.deadline }).tokens;
   return parseJson(innerToks, opts);
 }
