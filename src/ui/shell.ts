@@ -72,6 +72,15 @@ __WIDTH_HINT__
   </div>
 </header>
 
+<!-- ①b 路径条（v1.4 / FR-P9）：只在格式化 tab 出现。
+     放在判定条下方而不是输出区标题行 —— 320px 下标题行要与「行/字符」统计抢位置。 -->
+<div id="pathBar" class="pathbar" hidden tabindex="0" role="group" aria-label="当前元素路径，回车复制">
+  <span class="pathbar__label">路径</span>
+  <code class="pathbar__path pathbar__path--empty" id="pathText" role="status" aria-live="polite">点选 JSON 中的键或值</code>
+  <span class="badge badge--kind" id="pathKind" hidden></span>
+  <button id="pathCopy" class="btn btn--ghost pathbar__copy" type="button" disabled>复制</button>
+</div>
+
 <!-- ② 输入区（抬起的台面） -->
 <section class="pane pane--in">
   <div class="pane__head">
@@ -194,6 +203,11 @@ export function mountShell(surface: SurfaceKind): DomRefs {
     widthHintClose: qOpt<HTMLButtonElement>('widthHintClose'),
     editorIn: q('editorIn'),
     editorOut: q('editorOut'),
+    // v1.4 路径条：老测试挂的精简 DOM 没有这几个节点，必须可选
+    pathBar: qOpt('pathBar'),
+    pathText: qOpt('pathText'),
+    pathKind: qOpt('pathKind'),
+    pathCopy: qOpt<HTMLButtonElement>('pathCopy'),
     statsIn: q('statsIn'),
     statsOut: q('statsOut'),
     staleBadge: q('staleBadge'),

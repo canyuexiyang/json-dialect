@@ -533,6 +533,67 @@ body {
   border-color: color-mix(in srgb, var(--danger) 35%, transparent);
 }
 
+/* ── ①b 路径条（v1.4 / FR-P9） ─────────────────────────────
+   读数条：凹进、等宽、只有一行。放在判定条正下方 ——
+   输出区标题行在 320px 下要跟「行 / 字符」统计抢位置，塞不下。 */
+.pathbar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 3px 10px;
+  background: var(--bg-recess);
+  border-bottom: var(--rule) solid var(--border);
+}
+
+.pathbar:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: -2px;
+}
+
+.pathbar__label {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+
+.pathbar__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--signal);
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: text;
+  user-select: text;
+}
+
+/* 占位 / 不可用原因：不用信号色，避免被误读成「这是一条路径」 */
+.pathbar__path--empty {
+  font-family: var(--font);
+  font-weight: 500;
+  color: var(--text-faint);
+}
+
+.badge--kind {
+  flex: 0 0 auto;
+  background: transparent;
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+}
+
+.pathbar__copy {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
 /* 方向箭头：细线 + 箭头，不是字符箭头（避免字体降级时变样） */
 .detectbar__arrow {
   display: inline-flex;

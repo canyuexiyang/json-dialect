@@ -112,6 +112,8 @@ export function createEditor(
     readOnly?: boolean;
     dark?: boolean;
     onChange?: (text: string) => void;
+    /** v1.4：光标位置变化（单击 / 双击 / 拖选 / 方向键），供路径条跟随 */
+    onCursor?: (offset: number) => void;
   } = {},
 ): EditorHandle {
   const highlightCompartment = new Compartment();
@@ -133,6 +135,29 @@ export function createEditor(
       if (u.docChanged && opts.onChange) {
         opts.onChange(u.state.doc.toString());
       }
+      // v1.4：光标移动即报告位置（FR-P3）。键盘方向键、点击、拖选都会触发。
+      if (u.selectionSet && opts.onCursor) {
+        opts.onCursor(u.state.selection.main.head);
+      }
+    }),
+    /**
+     * v1.4：**必须与 selectionSet 双挂**。
+     *
+     * CM6 在点击「光标已经在的位置」时不会产生 selectionSet ——
+     * 只监听选择变化会漏掉「再点一次」，症状与「功能没做」一模一样。
+     * mousedown 能直接拿到坐标对应的偏移，补上这个缺口。
+     */
+    EditorView.domEventHandlers({
+      mousedown: (e, view) => {
+        if (!opts.onCursor) return false;
+        try {
+          const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+          if (pos != null) opts.onCursor(pos);
+        } catch {
+          // 布局尚未就绪（jsdom / 首帧）时静默跳过，绝不因此中断交互
+        }
+        return false; // 不阻止默认行为：选中、拖拽照常
+      },
     }),
   ];
 

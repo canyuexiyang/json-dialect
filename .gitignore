@@ -2,8 +2,9 @@
 node_modules/
 
 # 构建产物（dist/ 是扩展的可加载产物，需入库，故不忽略）
-# 发布用压缩包由 Release 附件承载
+# 发布用压缩包与校验文件由 Release 附件承载
 *.zip
+SHA256SUMS.txt
 
 # 本地工作区数据（含项目记忆与会话记录，禁止入库）
 .workbuddy/

@@ -22,8 +22,10 @@ import {
   type EscapeDir,
 } from '../core/escapeText.js';
 import { suggestFormats, type FormatSuggestion } from '../core/suggestFormat.js';
+import { locate, pathIrFor, supportsPath, type PathHit, type PathLang } from '../core/path.js';
+import type { JVal } from '../core/types.js';
 import { createEditor, type EditorHandle } from './editor.js';
-import { copyText } from './clipboard.js';
+import { copyText, selectAllIn } from './clipboard.js';
 import { downloadText, downloadLabel } from './download.js';
 import { loadPrefs, savePrefs, writeSession, discardSession, withTimeout, type Prefs, type WorkspaceState } from './sessionState.js';
 import { closeSidePanel } from './sidePanel.js';
@@ -69,6 +71,11 @@ export interface DomRefs {
   widthHint?: HTMLElement;
   widthHintClose?: HTMLButtonElement;
   splitter?: HTMLElement;
+  /** v1.4 路径条：全部可选 —— 老测试挂的精简 DOM 里没有这些节点 */
+  pathBar?: HTMLElement;
+  pathText?: HTMLElement;
+  pathKind?: HTMLElement;
+  pathCopy?: HTMLButtonElement;
 }
 
 /** 性能三档阈值（FR-G2/G3/G4） */
@@ -127,6 +134,18 @@ const FORMAT_TEXT: Record<SourceFormat, string> = {
   map: 'Map.toString()',
 };
 
+/** v1.4：路径条徽标文案。键与值同一条路径，靠这个徽标区分「我正在看的是哪个」 */
+const KIND_LABEL: Record<string, string> = {
+  string: '字符串',
+  number: '数字',
+  boolean: '布尔',
+  null: 'null',
+  array: '数组',
+  object: '对象',
+};
+
+const PATH_PLACEHOLDER = '点选 JSON 中的键或值';
+
 export class AppController {
   private in!: EditorHandle;
   private out!: EditorHandle;
@@ -163,6 +182,18 @@ export class AppController {
   private booted = false;
   /** v1.3.1：宽度引导条已被用户关掉（存进 prefs，属界面偏好，不违反 FR-H4） */
   private hintWidthDismissed = false;
+  /** v1.4：光标最后落在哪个编辑器 —— 路径条跟随它，而不是同时显示两个 */
+  private activePane: 'in' | 'out' = 'in';
+  /** v1.4：当前可复制的路径（空串 = 无路径，复制按钮禁用） */
+  private pathValue = '';
+  /** v1.4：路径条当前展示的完整文本（供溢出重新裁剪） */
+  private pathShown = '';
+  /** v1.4：路径文本的中段省略锚点；空串表示这不是一条路径（占位/原因） */
+  private pathHead = '$';
+  /** v1.4：输出区二次解析缓存 —— 文本或语言变了才重解析（AC-102） */
+  private outPathCache: { text: string; lang: PathLang; ir: JVal | null } | null = null;
+  /** v1.4：复制按钮「已复制」的还原定时器 */
+  private pathCopyTimer: number | undefined;
 
   constructor(
     private dom: DomRefs,
@@ -233,12 +264,14 @@ export class AppController {
       lang: 'python',
       dark: this.dark,
       onChange: () => { if (!this.suppressInput) this.schedule(); },
+      onCursor: (offset) => this.onCursor('in', offset),
     });
     this.out = createEditor(this.dom.editorOut, {
       doc: '',
       lang: 'json',
       readOnly: true, // FR-F9
       dark: this.dark,
+      onCursor: (offset) => this.onCursor('out', offset),
     });
 
     // v1.2：把原生 select 升级为可造型下拉。
@@ -249,6 +282,7 @@ export class AppController {
     this.bindEvents();
     this.applySplit(this.splitRatio);
     this.renderTabs();
+    this.clearPath(); // v1.4：格式化 tab 首屏先给占位，避免空白条
     if (initialInput) this.run(initialInput);
     else this.renderEmpty();
 
@@ -437,6 +471,18 @@ export class AppController {
     this.dom.splitter?.addEventListener('pointerdown', (e) => this.startDrag(e as PointerEvent));
     this.bindSplitterKeys();
 
+    // v1.4 路径条（FR-P6 / FR-P7）：按钮复制 + 双击路径文本复制 + 键盘复制
+    this.dom.pathCopy?.addEventListener('click', () => void this.copyPath());
+    this.dom.pathText?.addEventListener('dblclick', () => void this.copyPath());
+    this.dom.pathBar?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        void this.copyPath();
+      }
+    });
+    // 侧边栏被拖动改宽时重新裁剪，否则中段省略会按旧宽度算（AC-98）
+    window.addEventListener('resize', () => this.fitPath());
+
     // 修正提示条：点击摘要区展开/收起明细（FR-D5）
     this.dom.fixbar.tabIndex = 0;
     this.dom.fixbar.setAttribute('role', 'button');
@@ -451,6 +497,187 @@ export class AppController {
       const open = this.dom.fixbar.classList.toggle('fixbar--open');
       this.dom.fixbar.setAttribute('aria-expanded', String(open));
     });
+  }
+
+  // ── v1.4 路径定位（FR-P1～P10） ────────────────────────────────────
+
+  /** 光标事件入口（单击 / 双击 / 拖选 / 方向键），记录所属编辑器 */
+  private onCursor(pane: 'in' | 'out', offset: number): void {
+    this.activePane = pane;
+    this.updatePath(pane, offset);
+  }
+
+  /**
+   * 更新路径条。
+   *
+   * 命中 → 显示路径；未命中（分隔符 / 空白 / 文末）→ **保持上一次**（FR-P4）；
+   * 只有「明确不可用」时才改文案，绝不把报错态伪装成「没点中」。
+   */
+  private updatePath(pane: 'in' | 'out', offset: number): void {
+    if (this.tab !== 'format') return;
+    const handle = pane === 'in' ? this.in : this.out;
+    if (!handle) return;
+    const text = handle.getDoc();
+    const hit = locate(this.irForPane(pane), text, offset);
+    if (hit) {
+      this.showPath(hit);
+      return;
+    }
+    const reason = this.pathUnavailableReason(pane, text);
+    if (reason) this.showPathReason(reason);
+  }
+
+  /** 一次处理结束后按当前焦点重算 —— 输入内容变了，偏移对应的元素也变了 */
+  private refreshPathForActive(): void {
+    if (this.tab !== 'format') return;
+    const handle = this.activePane === 'in' ? this.in : this.out;
+    if (!handle) return;
+    this.updatePath(this.activePane, handle.view.state.selection.main.head);
+  }
+
+  /**
+   * 取某个编辑器对应的 IR。
+   *
+   * 输入区直接用转换结果里的 IR（零成本，且与源文本同一坐标系）；
+   * 输出区必须对**显示中的文本**重新解析 —— 它是同语言规范化结果，
+   * 与输入不是同一份文本（来源为 Python 时更是另一套语法）。
+   */
+  private irForPane(pane: 'in' | 'out'): JVal | undefined {
+    if (pane === 'in') {
+      const r = this.state;
+      if (!r || r.status === 'error' || r.status === 'timeout') return undefined;
+      // FR-P8：Java 转义串的 Span 落在解码后文本，与源码偏移对不上 —— 宁可不给
+      if (r.source === 'java') return undefined;
+      return r.ir;
+    }
+    const text = this.out.getDoc();
+    const lang = this.lastGoodLang;
+    if (!supportsPath(lang)) return undefined;
+    const cache = this.outPathCache;
+    if (cache && cache.text === text && cache.lang === lang) return cache.ir ?? undefined;
+    const ir = pathIrFor(text, lang);
+    this.outPathCache = { text, lang, ir };
+    return ir ?? undefined;
+  }
+
+  /** 明确不可用的原因；null = 只是没落在元素上，保持上一次即可 */
+  private pathUnavailableReason(pane: 'in' | 'out', text: string): string | null {
+    if (!text.trim()) return null;
+    if (pane === 'in') {
+      const r = this.state;
+      // 防抖过渡态（内容刚变、结果未出）：别闪，保持上一次
+      if (!r) return null;
+      if (r.status === 'error' || r.status === 'timeout') return '语法错误，无法定位路径';
+      if (r.source === 'java') return '该格式不支持路径定位';
+      return null;
+    }
+    if (!supportsPath(this.lastGoodLang)) return '该格式不支持路径定位';
+    if (text.length > T2) return '文档过大，输出区不提供路径';
+    return null;
+  }
+
+  private showPath(hit: PathHit): void {
+    if (!this.dom.pathBar) return;
+    this.dom.pathBar.hidden = false;
+    this.pathValue = hit.path;
+    this.pathHead = '$';
+    this.setPathText(hit.path, false);
+    const kind = this.dom.pathKind;
+    if (kind) {
+      kind.hidden = false;
+      kind.textContent = hit.target === 'key' ? '键' : (KIND_LABEL[hit.valueKind] ?? '');
+    }
+    if (this.dom.pathCopy) this.dom.pathCopy.disabled = false;
+  }
+
+  private showPathReason(reason: string): void {
+    this.pathValue = '';
+    this.pathHead = '';
+    if (this.dom.pathBar) this.dom.pathBar.hidden = false;
+    this.setPathText(reason, true);
+    if (this.dom.pathKind) this.dom.pathKind.hidden = true;
+    if (this.dom.pathCopy) this.dom.pathCopy.disabled = true;
+    // 禁用态必须把「已复制」的临时文案收回，否则会出现
+    //「路径条写着报错、按钮却写着已复制」的自相矛盾画面
+    this.resetPathCopyLabel();
+  }
+
+  /** 清空（切 tab / 空文档）：回到占位态，且不保留任何可复制内容（FR-P9） */
+  private clearPath(): void {
+    this.pathValue = '';
+    this.pathHead = '';
+    if (this.dom.pathBar) this.dom.pathBar.hidden = this.tab !== 'format';
+    this.setPathText(PATH_PLACEHOLDER, true);
+    if (this.dom.pathKind) this.dom.pathKind.hidden = true;
+    if (this.dom.pathCopy) this.dom.pathCopy.disabled = true;
+    this.resetPathCopyLabel();
+  }
+
+  private resetPathCopyLabel(): void {
+    if (this.pathCopyTimer) {
+      window.clearTimeout(this.pathCopyTimer);
+      this.pathCopyTimer = undefined;
+    }
+    const btn = this.dom.pathCopy;
+    if (!btn) return;
+    btn.textContent = '复制';
+    btn.classList.remove('btn--flash');
+  }
+
+  private setPathText(text: string, empty: boolean): void {
+    const el = this.dom.pathText;
+    if (!el) return;
+    this.pathShown = text;
+    el.classList.toggle('pathbar__path--empty', empty);
+    el.title = text;
+    this.fitPath();
+  }
+
+  /**
+   * 溢出时中段省略 `$…userName`。
+   *
+   * 不能用 CSS 的 text-overflow：它保留开头、砍掉结尾，而路径**尾部才是最具体的
+   * 那一段字段**，砍尾等于把有用信息全砍掉。切分按 Unicode 码点（与 FR-F4 同口径）。
+   */
+  private fitPath(): void {
+    const el = this.dom.pathText;
+    if (!el) return;
+    const text = this.pathShown;
+    el.textContent = text;
+    const avail = el.clientWidth;
+    // 未布局（jsdom / 首帧）时保留完整文本，绝不写出半截
+    if (!text || avail === 0) return;
+    if (el.scrollWidth <= avail) return;
+    const chars = [...text];
+    const prefix = this.pathHead ? this.pathHead + '…' : '…';
+    for (let keep = chars.length - 1; keep > 1; keep--) {
+      el.textContent = prefix + chars.slice(chars.length - keep).join('');
+      if (el.scrollWidth <= avail) return;
+    }
+    el.textContent = prefix;
+  }
+
+  private async copyPath(): Promise<void> {
+    if (!this.pathValue) return;
+    const res = await copyText(this.pathValue);
+    const btn = this.dom.pathCopy;
+    if (!btn) return;
+    if (res.ok) {
+      btn.textContent = '已复制';
+      btn.classList.remove('btn--flash');
+      void btn.offsetWidth;
+      btn.classList.add('btn--flash');
+      if (this.pathCopyTimer) window.clearTimeout(this.pathCopyTimer);
+      this.pathCopyTimer = window.setTimeout(() => {
+        this.pathCopyTimer = undefined;
+        btn.textContent = '复制';
+        btn.classList.remove('btn--flash');
+      }, 1200);
+      return;
+    }
+    // 自动复制失败：全选路径文本，引导手动复制（与 FR-E6 同款兜底）
+    if (this.dom.pathText) selectAllIn(this.dom.pathText);
+    this.setStatus(res.message, 'error');
   }
 
   /** 切换 tab（FR-L1 / FR-L4 / FR-L3） */
@@ -484,6 +711,8 @@ export class AppController {
     this.syncTabControls();
     void this.persist();
     this.run(this.in.getDoc());
+    // v1.4：切 tab 会把光标重置到 0，此时算出的路径不是用户的意图 —— 回到占位（AC-97）
+    this.clearPath();
   }
 
   /** 渲染 tab 选中态（FR-L1 顺序固定，样式只切 aria-selected + class） */
@@ -555,6 +784,11 @@ export class AppController {
     for (const select of this.selects) select.sync();
     const arrow = this.dom.root?.querySelector<HTMLElement>('.detectbar__arrow');
     if (arrow) arrow.hidden = isFormat || isEscape;
+    // v1.4：路径条只在格式化 tab 出现；切出即隐藏并清空（FR-P9）
+    if (this.dom.pathBar) {
+      this.dom.pathBar.hidden = !isFormat;
+      if (!isFormat) this.clearPath();
+    }
   }
 
   /** FR-K2：格式化 tab 的严格/容错档位切换 */
@@ -706,6 +940,8 @@ export class AppController {
       this.renderSuggestion(text, result);
       // FR-D13：疑似日志前缀 → 给一键剥离入口（只在报错时建议，绝不自动剥）
       this.renderPrefixHint(result);
+      // v1.4 / AC-99：输入区失去定位能力（提示原因并禁用复制），输出区仍是上次结果，可继续定位
+      this.refreshPathForActive();
       return;
     }
 
@@ -719,6 +955,7 @@ export class AppController {
       this.setFixbar(null, result);
       this.setStatus('转换超时，建议用放大页面或拆分文本', 'error');
       this.setButtons(false);
+      this.refreshPathForActive();
       return;
     }
 
@@ -747,6 +984,8 @@ export class AppController {
 
     // 类型面板（FR-C11 / D-2）
     this.renderTypePanel(result);
+    // v1.4：结果换了，光标所在的元素可能也换了
+    this.refreshPathForActive();
   }
 
   /**
@@ -867,11 +1106,28 @@ export class AppController {
       });
       box.appendChild(btn);
     }
-    this.dom.statusMsg.parentElement?.insertBefore(box, this.dom.statusMsg);
+    this.mountBar(box);
   }
 
   private clearSuggestion(): void {
     document.getElementById('suggestBox')?.remove();
+  }
+
+  /**
+   * 把建议条挂成「工具栏上方的独立一条」。
+   *
+   * v1.4 自测发现：原先挂在 `.status` 里（inline-flex 且不换行），
+   * 360px 下第二个建议按钮会被裁掉右半边。这是 v1.0 起就存在的布局缺陷，
+   * 只是要「报错 + 未锁定来源 + 窄侧边栏」三个条件同时成立才会显形 ——
+   * 因此历次三档宽度验收都没碰到。
+   */
+  private mountBar(box: HTMLElement): void {
+    const toolbar = this.dom.statusMsg.closest('.toolbar');
+    if (toolbar?.parentElement) {
+      toolbar.parentElement.insertBefore(box, toolbar);
+      return;
+    }
+    this.dom.statusMsg.parentElement?.insertBefore(box, this.dom.statusMsg);
   }
 
   /**
@@ -910,7 +1166,7 @@ export class AppController {
     });
     box.appendChild(btn);
 
-    this.dom.statusMsg.parentElement?.insertBefore(box, this.dom.statusMsg);
+    this.mountBar(box);
   }
 
   private clearPrefixHint(): void {
@@ -954,6 +1210,7 @@ export class AppController {
     this.dom.typePanel.hidden = true;
     this.clearSuggestion();
     this.clearPrefixHint();
+    this.clearPath();
     this.updateStats('', '');
   }
 
