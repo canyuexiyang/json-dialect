@@ -114,7 +114,7 @@ describe('AC-94 分隔符上保持上一次，不闪断', () => {
   it('从未命中过时保持占位（前导空白不算元素）', () => {
     ctrl.setInput('  {"a":1}');
     cursor('editorIn', 0);
-    expect(pathText()).toBe('点选 JSON 中的键或值');
+    expect(pathText()).toBe('点选输入或输出中的键或值');
     expect(copyBtn().disabled).toBe(true);
   });
 });
@@ -185,12 +185,12 @@ describe('AC-97 切 tab 隐藏并清空', () => {
 
     ctrl.switchTab('escape');
     expect(el('pathBar').hidden).toBe(true);
-    expect(pathText()).toBe('点选 JSON 中的键或值');
+    expect(pathText()).toBe('点选输入或输出中的键或值');
     expect(copyBtn().disabled).toBe(true);
 
     ctrl.switchTab('format');
     expect(el('pathBar').hidden).toBe(false);
-    expect(pathText()).toBe('点选 JSON 中的键或值');
+    expect(pathText()).toBe('点选输入或输出中的键或值');
   });
 });
 
@@ -246,7 +246,7 @@ describe('AC-104 零落盘 / 无副作用', () => {
 describe('空文档与初次挂载', () => {
   it('空输入显示占位、按钮禁用', () => {
     expect(el('pathBar').hidden).toBe(false);
-    expect(pathText()).toBe('点选 JSON 中的键或值');
+    expect(pathText()).toBe('点选输入或输出中的键或值');
     expect(copyBtn().disabled).toBe(true);
   });
 
@@ -254,7 +254,7 @@ describe('空文档与初次挂载', () => {
     ctrl.setInput(JSON_TEXT);
     cursor('editorIn', JSON_TEXT.indexOf('"userName"'));
     ctrl.setInput('');
-    expect(pathText()).toBe('点选 JSON 中的键或值');
+    expect(pathText()).toBe('点选输入或输出中的键或值');
     expect(copyBtn().disabled).toBe(true);
   });
 });

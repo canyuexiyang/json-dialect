@@ -280,5 +280,74 @@
     "name": "neg_plain_arr",
     "format": "json",
     "file": "neg_plain_arr.in.txt"
+  },
+  {
+    "name": "java_nested",
+    "format": "java",
+    "file": "java_nested.in.txt"
+  },
+  {
+    "name": "java_cjk",
+    "format": "java",
+    "file": "java_cjk.in.txt"
+  },
+  {
+    "name": "java_arr_top",
+    "format": "java",
+    "file": "java_arr_top.in.txt"
+  },
+  {
+    "name": "mix_quote_bool",
+    "format": "python",
+    "file": "mix_quote_bool.in.txt"
+  },
+  {
+    "name": "ctrl_chars",
+    "format": "json",
+    "file": "ctrl_chars.in.txt"
+  },
+  {
+    "name": "bom_json",
+    "format": "json",
+    "file": "bom_json.in.txt"
+  },
+  {
+    "name": "py_leading_zero",
+    "format": "python",
+    "file": "py_leading_zero.in.txt"
+  },
+  {
+    "name": "empty_containers",
+    "format": "json",
+    "file": "empty_containers.in.txt"
+  },
+  {
+    "name": "long_single_line",
+    "format": "json",
+    "file": "long_single_line.in.txt"
+  },
+  {
+    "name": "py_simple_java",
+    "format": "python",
+    "file": "py_simple.in.txt",
+    "target": "java"
+  },
+  {
+    "name": "json_cjk_java",
+    "format": "json",
+    "file": "json_cjk.in.txt",
+    "target": "java"
+  },
+  {
+    "name": "map_basic_java",
+    "format": "map",
+    "file": "map_basic.in.txt",
+    "target": "java"
+  },
+  {
+    "name": "java_esc_java",
+    "format": "java",
+    "file": "java_esc.in.txt",
+    "target": "java"
   }
 ]

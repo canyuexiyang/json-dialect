@@ -1,6 +1,6 @@
 {
   "name": "json-dialect",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "Python 字面量 ↔ Java/标准 JSON 双向转换的纯本地 Chrome 扩展（MV3）",
   "type": "module",
@@ -14,7 +14,8 @@
     "bench": "vitest run tests/bench --reporter=basic",
     "check:privacy": "node tools/check-privacy.mjs",
     "typecheck": "tsc --noEmit",
-    "verify:all": "npm run typecheck && npm run test && npm run verify:python && npm run build && npm run check:privacy"
+    "verify:all": "npm run typecheck && npm run test && npm run verify:python && npm run build && npm run check:privacy",
+    "verify:ui": "node tools/v14-verify.mjs"
   },
   "keywords": [
     "chrome-extension",
@@ -37,6 +38,14 @@
     "vitest": "^2.1.8"
   },
   "dependencies": {
-    "codemirror": "^6.0.2"
+    "codemirror": "^6.0.2",
+    "@codemirror/view": "^6.43.12",
+    "@codemirror/state": "^6.7.5",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/theme-one-dark": "^6.1.3"
   }
 }

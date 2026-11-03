@@ -19,9 +19,18 @@ import { decodeStringBody, encodeJsonContent } from './escape.js';
 export type EscapeStyle = 'json' | 'java' | 'url' | 'base64';
 export type EscapeDir = 'encode' | 'decode';
 
+/**
+ * v1.5 / D3：JSON 与 Java 的字符串转义表在数据层完全等价（实测双向逐字符相同）。
+ * 原先下拉里并列两个选项，让用户以为 8 格矩阵有 8 种行为，实际只有 3 种。
+ * 现把两者合并为「JSON / Java 字符串」一个可见风格；`java` 仅作为兼容别名保留
+ * （老 prefs / 程序化调用 / 既有测试仍可用），不再单列入口。
+ *
+ * 与转换 tab 的语义冲突由「包裹外层引号」开关解决：转义 tab 默认只转义内容，
+ * 勾上开关才产出带引号的完整字符串常量（等价于 toJavaEsc 的外壳）。
+ */
 export const ESCAPE_LABEL: Record<EscapeStyle, string> = {
-  json: 'JSON 字符串',
-  java: 'Java 字符串',
+  json: 'JSON / Java 字符串',
+  java: 'JSON / Java 字符串（兼容别名）',
   url: 'URL 百分号',
   base64: 'Base64',
 };
@@ -33,6 +42,9 @@ export const ESCAPE_DIR_LABEL: Record<EscapeDir, string> = {
 };
 
 export const ALL_ESCAPE_STYLES: EscapeStyle[] = ['json', 'java', 'url', 'base64'];
+
+/** 界面实际展示的风格（D3：java 是兼容别名，不单列） */
+export const VISIBLE_ESCAPE_STYLES: EscapeStyle[] = ['json', 'url', 'base64'];
 
 export const ALL_ESCAPE_DIRS: EscapeDir[] = ['encode', 'decode'];
 
@@ -113,7 +125,11 @@ function base64DecodeBytes(s: string): Uint8Array {
 
 // ── 各风格编解码 ────────────────────────────────────────────────────────
 
-/** Java 字符串编码：与 JSON 转义表一致，额外处理 \\uXXXX 场景由 JSON 规则覆盖 */
+/**
+ * Java 字符串编码（v1.5 / D3：显式声明为 JSON 的别名）。
+ * Java 与 JSON 的字符串转义表在数据层逐字符等价（\n \t \" \\ \uXXXX 均一致；
+ * 唯一差异 \/ 是 JSON 专有且本实现不用），所以两个风格共用同一实现。
+ */
 function javaEncode(s: string): string {
   return encodeJsonContent(s);
 }
@@ -177,6 +193,15 @@ export interface EscapeResult {
   note?: string;
 }
 
+export interface EscapeOptions {
+  /**
+   * v1.5 / D3：encode 时给结果包裹一对双引号，产出可直接贴进代码的
+   * 完整字符串常量 —— 与转换 tab 的「Java 转义字符串」输出（带外壳）语义对齐。
+   * decode 方向不需要它：剥壳由 FR-I6 自动完成。
+   */
+  wrapQuotes?: boolean;
+}
+
 // ── 外层引号剥离（FR-I6） ──────────────────────────────────────────────
 
 /**
@@ -229,20 +254,40 @@ export function stripOuterQuotes(
 }
 
 /** 不抛异常的版本，供 UI 直接消费 */
-export function escapeText(text: string, style: EscapeStyle, dir: EscapeDir): EscapeResult {
+export function escapeText(
+  text: string,
+  style: EscapeStyle,
+  dir: EscapeDir,
+  opts: EscapeOptions = {},
+): EscapeResult {
+  let stripped = false;
+  let note: string | undefined;
   try {
     // FR-I6：仅「去除转义」时脱掉常量外壳（复制自代码的字符串自带外层引号）
     let working = text;
-    let note: string | undefined;
     if (dir === 'decode') {
       const s = stripOuterQuotes(text, style);
       if (s.stripped) {
         working = s.text;
+        stripped = true;
         note = '已自动去除外层引号';
       }
     }
-    return { ok: true, output: applyEscape(working, style, dir), note };
+    let output = applyEscape(working, style, dir);
+    // v1.5 / D3：encode + wrapQuotes → 带外壳的完整字符串常量
+    if (dir === 'encode' && opts.wrapQuotes) {
+      output = '"' + output + '"';
+      note = note ? `${note}；已包裹外层引号` : '已包裹外层引号';
+    }
+    return { ok: true, output, note };
   } catch (e) {
-    return { ok: false, output: '', error: e instanceof Error ? e.message : String(e) };
+    const base = e instanceof Error ? e.message : String(e);
+    // v1.5 / D21：剥壳后失败必须说明因果，否则用户对照原文看不出
+    // 错误来自「剥掉引号之后的那段」而不是原始输入。
+    return {
+      ok: false,
+      output: '',
+      error: stripped ? `已尝试剥离外层引号后仍失败：${base}` : base,
+    };
   }
 }

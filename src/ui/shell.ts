@@ -22,9 +22,9 @@ const TEMPLATE = `
   </div>
 
   <nav class="tabbar" role="tablist" aria-label="功能">
-    <button class="tab tab--on" id="tabFormat" role="tab" type="button" data-tab="format" aria-selected="true">格式化</button>
-    <button class="tab" id="tabEscape" role="tab" type="button" data-tab="escape" aria-selected="false">转义</button>
-    <button class="tab" id="tabConvert" role="tab" type="button" data-tab="convert" aria-selected="false">转换</button>
+    <button class="tab tab--on" id="tabFormat" role="tab" type="button" data-tab="format" aria-selected="true" aria-controls="paneIn paneOut">格式化</button>
+    <button class="tab" id="tabEscape" role="tab" type="button" data-tab="escape" aria-selected="false" aria-controls="paneIn paneOut">转义</button>
+    <button class="tab" id="tabConvert" role="tab" type="button" data-tab="convert" aria-selected="false" aria-controls="paneIn paneOut">转换</button>
   </nav>
 
   <span class="topbar__spacer"></span>
@@ -40,6 +40,9 @@ __WIDTH_HINT__
     标准 JSON
   </span>
   <span class="badge" id="lockBadge" hidden>手动锁定</span>
+  <!-- v1.5 / D1：格式化 tab 下 Map 来源无对应目标，回退 Python 输出 ——
+       这个只读标签把语言变化明示出来，兑现「绝不静默改格式」 -->
+  <span class="badge badge--kind" id="sameTargetLabel" hidden title="Map.toString() 不作为输出目标（有损），已按 Python 字面量输出">→ Python 字面量</span>
   <select id="fmtSelect" aria-label="来源格式">
     <option value="json">标准 JSON</option>
     <option value="python">Python 字面量</option>
@@ -59,9 +62,10 @@ __WIDTH_HINT__
     <option value="python">Python 字面量</option>
     <option value="java">Java 转义字符串</option>
   </select>
+  <!-- v1.5 / D3：JSON 与 Java 的字符串转义表逐字符等价，合并为一个风格；
+       需要带外壳的完整常量时勾「包裹外层引号」（与转换 tab 的 Java 输出对齐） -->
   <select id="escapeStyleSelect" aria-label="转义风格" hidden>
-    <option value="json">JSON 字符串</option>
-    <option value="java">Java 字符串</option>
+    <option value="json">JSON / Java 字符串</option>
     <option value="url">URL 百分号</option>
     <option value="base64">Base64</option>
   </select>
@@ -70,6 +74,10 @@ __WIDTH_HINT__
     <button class="seg__btn" id="escapeDirDecode" type="button" data-dir="decode" aria-pressed="false">去除转义</button>
     <button class="seg__btn seg__btn--on" id="escapeDirEncode" type="button" data-dir="encode" aria-pressed="true">增加转义</button>
   </div>
+  <label class="wrapq" id="wrapQuotesWrap" hidden>
+    <input type="checkbox" id="wrapQuotes" />
+    <span>包裹外层引号</span>
+  </label>
 </header>
 
 <!-- ①b 路径条（v1.4 / FR-P9）：只在格式化 tab 出现。
@@ -81,13 +89,23 @@ __WIDTH_HINT__
   <button id="pathCopy" class="btn btn--ghost pathbar__copy" type="button" disabled>复制</button>
 </div>
 
-<!-- ② 输入区（抬起的台面） -->
-<section class="pane pane--in">
+<!-- ② 输入区（抬起的台面）。v1.5 / D11：pane 带 tabpanel 语义（aria-labelledby 动态指向当前 tab） -->
+<section class="pane pane--in" id="paneIn" role="tabpanel" aria-label="输入">
   <div class="pane__head">
     <span class="pane__title">输入</span>
     <span class="stats" id="statsIn">行 1 · 字符 0</span>
+    <button id="btnClear" class="btn btn--ghost pane__clear" type="button" title="清空输入" aria-label="清空输入">清空</button>
   </div>
   <div id="editorIn" class="editor"></div>
+  <!-- v1.5 / D12：空态一键示例 —— 点击直接灌进输入区（示例属界面文案，不落盘） -->
+  <div id="emptyHints" class="emptyhints" hidden>
+    <span class="emptyhints__text">支持 4 种来源：JSON · Python 字面量 · Java 转义字符串 · Map.toString()</span>
+    <div class="emptyhints__btns">
+      <button class="btn btn--ghost" type="button" data-example="json">示例：JSON</button>
+      <button class="btn btn--ghost" type="button" data-example="python">示例：Python</button>
+      <button class="btn btn--ghost" type="button" data-example="map">示例：Map</button>
+    </div>
+  </div>
   <div id="fixbar" class="fixbar" hidden></div>
 </section>
 
@@ -96,7 +114,7 @@ __WIDTH_HINT__
      aria-label="拖动调整输入与输出的高度，方向键微调"></div>
 
 <!-- ④ 输出区（凹进的读数窗） -->
-<section class="pane pane--out">
+<section class="pane pane--out" id="paneOut" role="tabpanel" aria-label="输出">
   <div class="pane__head">
     <span class="pane__title">输出</span>
     <span class="stats" id="statsOut">行 1 · 字符 0</span>
@@ -110,12 +128,15 @@ __WIDTH_HINT__
 <footer class="toolbar">
   <span class="status">
     <span class="status__led" id="statusLed" aria-hidden="true"></span>
-    <span id="statusMsg" class="statusmsg"></span>
+    <!-- v1.5 / D11：读屏播报状态变化 -->
+    <span id="statusMsg" class="statusmsg" aria-live="polite" role="status"></span>
   </span>
   <div class="toolbar__actions">
     <button id="btnConvert" class="btn">转换</button>
     <button id="btnFormat" class="btn">格式化</button>
     <button id="btnCompact" class="btn">压缩</button>
+    <button id="btnSnippet" class="btn" title="把当前输入存为片段（仅本次会话内存）">存为片段</button>
+    <button id="btnCompare" class="btn" title="并排对比输入与输出">对比</button>
     <button id="btnCopy" class="btn btn--primary">
       <svg class="ico" viewBox="0 0 16 16" aria-hidden="true">
         <rect x="5.5" y="5.5" width="8" height="8" rx="1" />
@@ -186,6 +207,7 @@ export function mountShell(surface: SurfaceKind): DomRefs {
     root,
     fmtLabel: q('fmtLabel'),
     lockBadge: q('lockBadge'),
+    sameTargetLabel: qOpt('sameTargetLabel'),
     fmtSelect: q<HTMLSelectElement>('fmtSelect'),
     resetAuto: q<HTMLButtonElement>('resetAuto'),
     tabFormat: q<HTMLButtonElement>('tabFormat'),
@@ -196,6 +218,8 @@ export function mountShell(surface: SurfaceKind): DomRefs {
     escapeDirSeg: q('escapeDirSeg'),
     escapeDirDecode: q<HTMLButtonElement>('escapeDirDecode'),
     escapeDirEncode: q<HTMLButtonElement>('escapeDirEncode'),
+    wrapQuotesWrap: qOpt('wrapQuotesWrap'),
+    wrapQuotes: qOpt<HTMLInputElement>('wrapQuotes'),
     // 标签页形态没有放大按钮 —— 传undefined 让 controller 走可选链
     enlarge: qOpt<HTMLButtonElement>('enlarge'),
     // 宽度引导条同样只在侧边栏形态存在
@@ -203,6 +227,13 @@ export function mountShell(surface: SurfaceKind): DomRefs {
     widthHintClose: qOpt<HTMLButtonElement>('widthHintClose'),
     editorIn: q('editorIn'),
     editorOut: q('editorOut'),
+    // v1.5：空态示例 / 清空输入 / 片段 / 对比（老测试挂的精简 DOM 无这些节点，必须可选）
+    emptyHints: qOpt('emptyHints'),
+    btnClear: qOpt<HTMLButtonElement>('btnClear'),
+    btnSnippet: qOpt<HTMLButtonElement>('btnSnippet'),
+    btnCompare: qOpt<HTMLButtonElement>('btnCompare'),
+    paneIn: qOpt('paneIn'),
+    paneOut: qOpt('paneOut'),
     // v1.4 路径条：老测试挂的精简 DOM 没有这几个节点，必须可选
     pathBar: qOpt('pathBar'),
     pathText: qOpt('pathText'),

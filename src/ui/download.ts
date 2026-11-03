@@ -8,6 +8,8 @@ import type { OutputLang } from '../core/types.js';
 export function timestamp(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
+  // v1.5 / D24：补毫秒。原来只到秒，同一秒内第二次下载会靠浏览器加 "(1)" 后缀，
+  // 用户在导出多份对照时难以分清先后 —— 文件名自带毫秒即可一眼排序。
   return (
     d.getFullYear() +
     p(d.getMonth() + 1) +
@@ -15,7 +17,9 @@ export function timestamp(): string {
     '-' +
     p(d.getHours()) +
     p(d.getMinutes()) +
-    p(d.getSeconds())
+    p(d.getSeconds()) +
+    '-' +
+    String(d.getMilliseconds()).padStart(3, '0')
   );
 }
 

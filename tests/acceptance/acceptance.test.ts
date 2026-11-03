@@ -194,8 +194,8 @@ describe('M3 出口判据（§8.5 / §8.7）', () => {
   });
 
   it('AC-31/31a/31b 下载文件名按方向切扩展名', () => {
-    expect(fileNameFor('json')).toMatch(/^json-dialect-output-\d{8}-\d{6}\.json$/);
-    expect(fileNameFor('python')).toMatch(/^json-dialect-output-\d{8}-\d{6}\.py$/);
+    expect(fileNameFor('json')).toMatch(/^json-dialect-output-\d{8}-\d{6}-\d{3}\.json$/);
+    expect(fileNameFor('python')).toMatch(/^json-dialect-output-\d{8}-\d{6}-\d{3}\.py$/);
     expect(downloadLabel('json')).toBe('下载 .json');
     expect(downloadLabel('python')).toBe('下载 .py');
   });

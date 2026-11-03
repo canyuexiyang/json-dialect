@@ -1,0 +1,116 @@
+[
+  {
+    "id": "esc_b64_enc_cjk",
+    "style": "base64",
+    "dir": "encode",
+    "input": "中文",
+    "expected": "5Lit5paH"
+  },
+  {
+    "id": "esc_b64_dec_cjk",
+    "style": "base64",
+    "dir": "decode",
+    "input": "5Lit5paH",
+    "expected": "中文"
+  },
+  {
+    "id": "esc_b64_enc_empty",
+    "style": "base64",
+    "dir": "encode",
+    "input": "",
+    "expected": ""
+  },
+  {
+    "id": "esc_url_enc",
+    "style": "url",
+    "dir": "encode",
+    "input": "中文 ?&=",
+    "expected": "%E4%B8%AD%E6%96%87%20%3F%26%3D"
+  },
+  {
+    "id": "esc_url_dec",
+    "style": "url",
+    "dir": "decode",
+    "input": "%E4%B8%AD%E6%96%87%20%3F%26%3D",
+    "expected": "中文 ?&="
+  },
+  {
+    "id": "esc_url_enc_special",
+    "style": "url",
+    "dir": "encode",
+    "input": "a!b'c(d)e*f",
+    "expected": "a%21b%27c%28d%29e%2Af"
+  },
+  {
+    "id": "esc_json_enc",
+    "style": "json",
+    "dir": "encode",
+    "input": "{\"a\":1}\n中文",
+    "expected": "{\\\"a\\\":1}\\n中文"
+  },
+  {
+    "id": "esc_json_dec",
+    "style": "json",
+    "dir": "decode",
+    "input": "{\\\"a\\\":1}\\n中文",
+    "expected": "{\"a\":1}\n中文"
+  },
+  {
+    "id": "esc_json_enc_ctrl",
+    "style": "json",
+    "dir": "encode",
+    "input": "a\u0001b c",
+    "expected": "a\\u0001b\\u2028c"
+  },
+  {
+    "id": "esc_json_enc_u2028",
+    "style": "json",
+    "dir": "encode",
+    "input": "x y",
+    "expected": "x\\u2028y"
+  },
+  {
+    "id": "esc_java_alias_enc",
+    "style": "java",
+    "dir": "encode",
+    "input": "a\"b\\c",
+    "expected": "a\\\"b\\\\c"
+  },
+  {
+    "id": "esc_java_alias_dec",
+    "style": "java",
+    "dir": "decode",
+    "input": "a\\\"b\\\\c",
+    "expected": "a\"b\\c"
+  },
+  {
+    "id": "esc_b64_enc_wrap",
+    "style": "base64",
+    "dir": "encode",
+    "input": "中文",
+    "expected": "\"5Lit5paH\"",
+    "wrapQuotes": true
+  },
+  {
+    "id": "esc_json_enc_wrap",
+    "style": "json",
+    "dir": "encode",
+    "input": "{\"a\":1}",
+    "expected": "\"{\\\"a\\\":1}\"",
+    "wrapQuotes": true
+  },
+  {
+    "id": "esc_url_dec_quoted",
+    "style": "url",
+    "dir": "decode",
+    "input": "\"%E4%B8%AD%E6%96%87\"",
+    "expected": "中文"
+  },
+  {
+    "id": "esc_b64_dec_quoted",
+    "style": "base64",
+    "dir": "decode",
+    "input": "\"5Lit5paH\"",
+    "expected": "中文"
+  }
+]

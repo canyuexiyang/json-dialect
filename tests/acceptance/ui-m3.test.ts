@@ -190,9 +190,9 @@ describe('M3-3 下载按方向切扩展名（FR-E7/E7a）', () => {
   });
 
   it('AC-31/31a 文件名格式', () => {
-    expect(fileNameFor('json')).toMatch(/^json-dialect-output-\d{8}-\d{6}\.json$/);
-    expect(fileNameFor('python')).toMatch(/^json-dialect-output-\d{8}-\d{6}\.py$/);
-    expect(fileNameFor('java')).toMatch(/^json-dialect-output-\d{8}-\d{6}\.txt$/);
+    expect(fileNameFor('json')).toMatch(/^json-dialect-output-\d{8}-\d{6}-\d{3}\.json$/);
+    expect(fileNameFor('python')).toMatch(/^json-dialect-output-\d{8}-\d{6}-\d{3}\.py$/);
+    expect(fileNameFor('java')).toMatch(/^json-dialect-output-\d{8}-\d{6}-\d{3}\.txt$/);
     expect(downloadLabel('json')).toBe('下载 .json');
     expect(downloadLabel('python')).toBe('下载 .py');
     expect(downloadLabel('java')).toBe('下载 .txt');

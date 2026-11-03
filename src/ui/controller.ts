@@ -30,11 +30,13 @@ import { downloadText, downloadLabel } from './download.js';
 import { loadPrefs, savePrefs, writeSession, discardSession, withTimeout, type Prefs, type WorkspaceState } from './sessionState.js';
 import { closeSidePanel } from './sidePanel.js';
 import { createTypePanel, isOverrideType, type OverrideType } from './typeWidgets.js';
-import { decorateSelect, bindHiddenClose, type SelectHandle } from './select.js';
+import { decorateSelect, bindHiddenClose, closeOpenSelect, type SelectHandle } from './select.js';
 
 export interface DomRefs {
   fmtLabel: HTMLElement;
   lockBadge: HTMLElement;
+  /** v1.5 / D1：格式化 tab 下 Map 来源回退 Python 的明示标签 */
+  sameTargetLabel?: HTMLElement;
   fmtSelect: HTMLSelectElement;
   resetAuto: HTMLButtonElement;
   enlarge?: HTMLButtonElement;
@@ -54,8 +56,22 @@ export interface DomRefs {
   escapeDirSeg?: HTMLElement;
   escapeDirDecode?: HTMLButtonElement;
   escapeDirEncode?: HTMLButtonElement;
+  /** v1.5 / D3：encode 时给结果包裹外层引号（转义 tab） */
+  wrapQuotesWrap?: HTMLElement;
+  wrapQuotes?: HTMLInputElement;
   editorIn: HTMLElement;
   editorOut: HTMLElement;
+  /** v1.5 / D12：空态一键示例 */
+  emptyHints?: HTMLElement;
+  /** v1.5 / D26：清空输入 */
+  btnClear?: HTMLButtonElement;
+  /** v1.5 / D26：存为片段（仅内存） */
+  btnSnippet?: HTMLButtonElement;
+  /** v1.5 / D26：并排对比输入与输出 */
+  btnCompare?: HTMLButtonElement;
+  /** v1.5 / D11：tabpanel 语义容器 */
+  paneIn?: HTMLElement;
+  paneOut?: HTMLElement;
   statsIn: HTMLElement;
   statsOut: HTMLElement;
   staleBadge: HTMLElement;
@@ -78,9 +94,11 @@ export interface DomRefs {
   pathCopy?: HTMLButtonElement;
 }
 
-/** 性能三档阈值（FR-G2/G3/G4） */
+/** 性能三档阈值（FR-G2/G3/G4）
+ *  v1.5 / D19：T2 从 500k 提到 1M。实测（vite-node）1M 字符 convert 仅
+ *  169–215ms，真正的瓶颈在 CM6 setDoc + 渲染而非内核；500k 关实时转换过于保守。 */
 const T1 = 100_000;
-const T2 = 500_000;
+const T2 = 1_000_000;
 
 /** splitter 拖拽/键盘微调的上下限比例 */
 const SPLIT_MIN = 0.2;
@@ -125,6 +143,8 @@ export interface InheritedState {
   strict?: boolean;
   escapeStyle?: string;
   escapeDir?: string;
+  /** v1.5 / D3：包裹外层引号开关一并继承 */
+  wrapQuotes?: boolean;
 }
 
 const FORMAT_TEXT: Record<SourceFormat, string> = {
@@ -144,7 +164,17 @@ const KIND_LABEL: Record<string, string> = {
   object: '对象',
 };
 
-const PATH_PLACEHOLDER = '点选 JSON 中的键或值';
+const PATH_PLACEHOLDER = '点选输入或输出中的键或值';
+
+/**
+ * v1.5 / D12：空态一键示例。
+ * 属界面文案（写死在代码里，不落盘、不来自任何输入），不违反 FR-H4。
+ */
+const EXAMPLE_INPUTS: Record<'json' | 'python' | 'map', string> = {
+  json: '{"tool": "JSON Dialect", "tags": ["json", "python"], "ok": true}',
+  python: "{'tool': 'JSON Dialect', 'tags': ['json', 'python'], 'ok': True}",
+  map: '{tool=JSON Dialect, tags=[json, python], ok=true}',
+};
 
 export class AppController {
   private in!: EditorHandle;
@@ -194,6 +224,16 @@ export class AppController {
   private outPathCache: { text: string; lang: PathLang; ir: JVal | null } | null = null;
   /** v1.4：复制按钮「已复制」的还原定时器 */
   private pathCopyTimer: number | undefined;
+  /** v1.5 / D3：转义 tab encode 是否包裹外层引号 */
+  private wrapQuotes = false;
+  /** v1.5 / D19：输入超过 T2 时置位 —— 「转换」按钮恢复本名，「仍要转换」条出现 */
+  private oversize = false;
+  /** v1.5 / D7：resize 的 rAF 节流句柄 */
+  private resizeRaf = 0;
+  /** v1.5 / D26：输入片段（纯内存，绝不落盘，刷新即失；上限 8 条防挤爆） */
+  private snippets: string[] = [];
+  /** v1.5 / D4：matchMedia change 监听器（销毁时摘除） */
+  private themeQuery: MediaQueryList | null = null;
 
   constructor(
     private dom: DomRefs,
@@ -223,6 +263,18 @@ export class AppController {
     this.dark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
     if (this.dark) document.body.classList.add('theme-dark');
 
+    // v1.5 / D4：监听系统深浅色切换，运行时跟随（原先只读一次，切主题要重载扩展）。
+    // jsdom 的 matchMedia stub 可能没有 addEventListener —— 必须能力检测。
+    try {
+      const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+      if (mq && typeof (mq as MediaQueryList & { addEventListener?: unknown }).addEventListener === 'function') {
+        this.themeQuery = mq;
+        mq.addEventListener('change', (e) => this.applyTheme(e.matches));
+      }
+    } catch {
+      /* 监听失败不影响任何功能，只是不跟随 */
+    }
+
     // ── ① 同步段：先把交互就绪，任何 await 都不得出现在这之前 ──────────────
     // 先用继承值/默认值，prefs 到位后再补（见 ②）
     if (inherited?.compact !== undefined) this.compact = inherited.compact;
@@ -236,6 +288,10 @@ export class AppController {
     }
     if (inherited?.escapeDir === 'encode' || inherited?.escapeDir === 'decode') {
       this.escapeDir = inherited.escapeDir;
+    }
+    if (inherited?.wrapQuotes !== undefined) {
+      this.wrapQuotes = inherited.wrapQuotes;
+      if (this.dom.wrapQuotes) this.dom.wrapQuotes.checked = this.wrapQuotes;
     }
 
     // AC-33：来源判定与类型覆盖必须一并继承，否则放大页只是「文本一样但结果不同」
@@ -280,6 +336,7 @@ export class AppController {
     this.decorateSelects();
 
     this.bindEvents();
+    this.bindGlobalKeys();
     this.applySplit(this.splitRatio);
     this.renderTabs();
     this.clearPath(); // v1.4：格式化 tab 首屏先给占位，避免空白条
@@ -327,23 +384,49 @@ export class AppController {
     this.dom.root?.setAttribute('data-channel', this.tab);
   }
 
+  /** v1.5 / D4：运行时切换深浅色 —— body class + 两个编辑器主题 reconfigure，不重建 */
+  private applyTheme(dark: boolean): void {
+    if (dark === this.dark) return;
+    this.dark = dark;
+    document.body.classList.toggle('theme-dark', dark);
+    try {
+      this.in.setDark(dark);
+      this.out.setDark(dark);
+    } catch {
+      /* reconfigure 失败不影响功能 */
+    }
+  }
+
   /** 读取界面偏好；超时或失败都按默认值继续，不影响已就绪的 UI */
   private async applyPrefsWhenReady(): Promise<void> {
     const fallback: Prefs = {};
     const revision = this.prefsRevision;
     const prefs = await withTimeout(loadPrefs(), 1500, fallback);
+    // v1.5 / D8：守卫只在「用户显式改了偏好」（persist 调用点）时触发。
+    // 原先 schedule/setInput/setLocked 也会递增 revision，导致托管 Chrome 下
+    // storage 迟迟不返回时，用户一粘贴就把 tab/档位/缩进/比例补齐整个丢掉。
     if (revision !== this.prefsRevision) return;
 
     // FR-L3 优先级：**历史偏好覆盖默认值**。
     // 首次安装 / 清数据 → 保持「格式化」；此后 → 上次离开的 tab。
     // 顺序不能反，否则「记住上次」会把默认值架空。
-    if (prefs.tab && isTabId(prefs.tab) && prefs.tab !== this.tab) this.tab = prefs.tab;
+    const prev = {
+      tab: this.tab,
+      target: this.target,
+      strict: this.strict,
+      compact: this.compact,
+      escapeDir: this.escapeDir,
+      wrapQuotes: this.wrapQuotes,
+    };
+    if (prefs.tab && isTabId(prefs.tab)) this.tab = prefs.tab;
     if (prefs.target && isTargetOpt(prefs.target)) this.target = prefs.target;
     if (prefs.strict !== undefined) this.strict = prefs.strict;
     // FR-I5 / FR-L3 同一优先级：历史偏好覆盖默认值（默认「增加转义」）
     if (prefs.escapeDir === 'encode' || prefs.escapeDir === 'decode') {
       this.escapeDir = prefs.escapeDir;
     }
+    if (typeof prefs.wrapQuotes === 'boolean') this.wrapQuotes = prefs.wrapQuotes;
+    if (this.dom.wrapQuotes) this.dom.wrapQuotes.checked = this.wrapQuotes;
     // v1.3.1：引导条只提示一次，关过就不再打扰
     if (prefs.hintWidth !== undefined) this.hintWidthDismissed = prefs.hintWidth;
     if (typeof prefs.splitRatio === 'number' && Number.isFinite(prefs.splitRatio)) this.applySplit(prefs.splitRatio);
@@ -351,11 +434,20 @@ export class AppController {
     this.renderTabs();
     this.syncTabControls();
 
-    const compactChanged = prefs.compact !== undefined && prefs.compact !== this.compact;
-    if (compactChanged) this.compact = prefs.compact as boolean;
+    // v1.5 / D17：只有偏好**真的改变了会产出不同结果的字段**才重跑。
+    // 原条件 `compactChanged || this.tab` 里 this.tab 恒为真值 ——
+    // 每次启动只要有输入就多跑一次 convert。
+    const changed =
+      this.tab !== prev.tab ||
+      this.target !== prev.target ||
+      this.strict !== prev.strict ||
+      this.compact !== prefs.compact ||
+      this.escapeDir !== prev.escapeDir ||
+      this.wrapQuotes !== prev.wrapQuotes;
+    if (prefs.compact !== undefined) this.compact = prefs.compact;
 
     // 已经有输出就按新偏好重渲染一次，保持视觉一致
-    if (compactChanged || this.tab) {
+    if (changed || this.compact !== prev.compact) {
       const text = this.in.getDoc();
       if (text.trim() !== '') this.run(text);
     }
@@ -416,6 +508,44 @@ export class AppController {
       btn?.addEventListener('click', () => this.setEscapeDir(dir));
     }
 
+    // v1.5 / D3：包裹外层引号（仅 encode 方向有意义；勾选即重跑）
+    this.dom.wrapQuotes?.addEventListener('change', () => {
+      this.wrapQuotes = this.dom.wrapQuotes!.checked;
+      void this.persist();
+      this.run(this.in.getDoc());
+    });
+
+    // v1.5 / D12：空态一键示例 —— 点击直接灌进输入区（示例文案属界面内容，不落盘）
+    this.dom.emptyHints?.querySelectorAll<HTMLButtonElement>('[data-example]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const ex = EXAMPLE_INPUTS[btn.dataset.example as keyof typeof EXAMPLE_INPUTS];
+        if (ex) this.setInput(ex);
+      });
+    });
+
+    // v1.5 / D26：清空输入
+    this.dom.btnClear?.addEventListener('click', () => this.setInput(''));
+
+    // v1.5 / D26：存为片段（纯内存；FR-H4 输入零落盘 —— 绝不进任何 storage）
+    this.dom.btnSnippet?.addEventListener('click', () => {
+      const text = this.in.getDoc();
+      if (!text.trim()) {
+        this.setStatus('输入为空，没有可存的片段');
+        return;
+      }
+      if (this.snippets[0] === text) {
+        this.setStatus('最新片段就是它（不重复保存）');
+        return;
+      }
+      this.snippets.unshift(text);
+      if (this.snippets.length > 8) this.snippets.length = 8;
+      this.renderSnippets();
+      this.setStatus('已存为片段（仅本次会话，刷新即失）');
+    });
+
+    // v1.5 / D26：并排对比输入与输出
+    this.dom.btnCompare?.addEventListener('click', () => this.openCompare());
+
     this.dom.btnConvert.addEventListener('click', () => {
       // 转义 tab 下「转换」按钮 = 反向执行一次（FR-I5：与顶部方向控件等价）
       if (this.tab === 'escape') {
@@ -426,6 +556,8 @@ export class AppController {
     });
 
     // 格式化 tab：btnFormat = 严格/容错档位（FR-K2），btnCompact = 美化/压缩（FR-K4）
+    // v1.5 / D6：转换 tab 的 btnCompact 同样走 toggle —— 原先点击只会单向置 true，
+    // 想从压缩切回美化没有任何入口。
     this.dom.btnFormat.addEventListener('click', () => {
       if (this.tab === 'format') {
         this.toggleStrict();
@@ -437,13 +569,8 @@ export class AppController {
     });
 
     this.dom.btnCompact.addEventListener('click', () => {
-      if (this.tab === 'format') {
-        this.toggleCompact();
-        return;
-      }
-      this.compact = true;
-      void this.persist();
-      this.run(this.in.getDoc());
+      if (this.tab === 'escape') return;
+      this.toggleCompact();
     });
 
     this.dom.btnCopy.addEventListener('click', () => void this.handleCopy());
@@ -481,7 +608,31 @@ export class AppController {
       }
     });
     // 侧边栏被拖动改宽时重新裁剪，否则中段省略会按旧宽度算（AC-98）
-    window.addEventListener('resize', () => this.fitPath());
+    // v1.5 / D7：resize 高频触发，用 rAF 合并到下一帧 —— 原来
+    // 每次 resize 都同步 fitPath（读 scrollWidth 强制重排），拖边缘会连续 reflow。
+    window.addEventListener('resize', () => {
+      if (this.resizeRaf) return;
+      this.resizeRaf = window.requestAnimationFrame(() => {
+        this.resizeRaf = 0;
+        this.fitPath();
+      });
+    });
+
+    // v1.5 / D26：拖文件进输入区（扩展页内 FileReader，零网络；文件只进内存）
+    this.dom.editorIn.addEventListener('dragover', (e) => e.preventDefault());
+    this.dom.editorIn.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      if (file.size > 20 * 1024 * 1024) {
+        this.setStatus('文件超过 20MB，为保住输入流畅度已拒收', 'error');
+        return;
+      }
+      void file.text().then((text) => {
+        this.setInput(text);
+        this.setStatus(`已载入 ${file.name}（${computeStats(text).chars} 字符）`);
+      });
+    });
 
     // 修正提示条：点击摘要区展开/收起明细（FR-D5）
     this.dom.fixbar.tabIndex = 0;
@@ -514,7 +665,9 @@ export class AppController {
    * 只有「明确不可用」时才改文案，绝不把报错态伪装成「没点中」。
    */
   private updatePath(pane: 'in' | 'out', offset: number): void {
-    if (this.tab !== 'format') return;
+    // v1.5 / D25：转换 tab 也开放路径定位（输出区是目标语言，同样有「这个值在哪」的需求）。
+    // 转义 tab 是纯文本通道，没有结构 → 不提供。
+    if (this.tab === 'escape') return;
     const handle = pane === 'in' ? this.in : this.out;
     if (!handle) return;
     const text = handle.getDoc();
@@ -529,7 +682,7 @@ export class AppController {
 
   /** 一次处理结束后按当前焦点重算 —— 输入内容变了，偏移对应的元素也变了 */
   private refreshPathForActive(): void {
-    if (this.tab !== 'format') return;
+    if (this.tab === 'escape') return;
     const handle = this.activePane === 'in' ? this.in : this.out;
     if (!handle) return;
     this.updatePath(this.activePane, handle.view.state.selection.main.head);
@@ -606,7 +759,7 @@ export class AppController {
   private clearPath(): void {
     this.pathValue = '';
     this.pathHead = '';
-    if (this.dom.pathBar) this.dom.pathBar.hidden = this.tab !== 'format';
+    if (this.dom.pathBar) this.dom.pathBar.hidden = this.tab === 'escape';
     this.setPathText(PATH_PLACEHOLDER, true);
     if (this.dom.pathKind) this.dom.pathKind.hidden = true;
     if (this.dom.pathCopy) this.dom.pathCopy.disabled = true;
@@ -638,23 +791,38 @@ export class AppController {
    *
    * 不能用 CSS 的 text-overflow：它保留开头、砍掉结尾，而路径**尾部才是最具体的
    * 那一段字段**，砍尾等于把有用信息全砍掉。切分按 Unicode 码点（与 FR-F4 同口径）。
+   *
+   * v1.5 / D7：由线性递减改为**二分查找**。保留的尾部越长文本越宽（单调），
+   * 可二分求「不溢出的最大保留长度」—— 原来 O(n) 次写 DOM + 读 scrollWidth
+   * （每次读都强制同步重排），长路径下光标每动一次就是几十次 reflow。
    */
   private fitPath(): void {
     const el = this.dom.pathText;
     if (!el) return;
     const text = this.pathShown;
+    if (!text) return;
     el.textContent = text;
     const avail = el.clientWidth;
     // 未布局（jsdom / 首帧）时保留完整文本，绝不写出半截
-    if (!text || avail === 0) return;
+    if (avail === 0) return;
     if (el.scrollWidth <= avail) return;
     const chars = [...text];
     const prefix = this.pathHead ? this.pathHead + '…' : '…';
-    for (let keep = chars.length - 1; keep > 1; keep--) {
-      el.textContent = prefix + chars.slice(chars.length - keep).join('');
-      if (el.scrollWidth <= avail) return;
+    // 二分：找最大的 keep 使 prefix + 尾部 keep 个字符仍放得下
+    let lo = 1;
+    let hi = chars.length - 1;
+    let best = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      el.textContent = prefix + chars.slice(chars.length - mid).join('');
+      if (el.scrollWidth <= avail) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
     }
-    el.textContent = prefix;
+    el.textContent = best > 0 ? prefix + chars.slice(chars.length - best).join('') : prefix;
   }
 
   private async copyPath(): Promise<void> {
@@ -678,6 +846,178 @@ export class AppController {
     // 自动复制失败：全选路径文本，引导手动复制（与 FR-E6 同款兜底）
     if (this.dom.pathText) selectAllIn(this.dom.pathText);
     this.setStatus(res.message, 'error');
+  }
+
+  // ── v1.5 全局快捷键（D27 / K1~K3） ────────────────────────────────
+
+  /**
+   * 全局键位（均在编辑器**外**仍可用）：
+   *  Alt+1/2/3 直达 tab；Alt+T 打开标签页（panel 形态）；
+   *  Mod+Shift+C 复制输出；Mod+Shift+S 下载；Mod+Shift+A 全选输出并聚焦
+   *  （K2：CM6 的 Ctrl+A 只全选当前编辑器，两个编辑器同页时用它直达输出）。
+   *  Esc：先关对比浮层 / 自绘菜单；焦点不在编辑器内且为侧边栏形态时关闭侧边栏
+   *  （K3：编辑器内的 Esc 保留 CM6 的「简化选区」语义，绝不抢）。
+   */
+  private bindGlobalKeys(): void {
+    document.addEventListener('keydown', (e) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (e.altKey && !mod && !e.shiftKey && ['1', '2', '3'].includes(e.key)) {
+        e.preventDefault();
+        const id = TAB_ORDER[Number(e.key) - 1];
+        this.switchTab(id);
+        const btn = id === 'format' ? this.dom.tabFormat : id === 'escape' ? this.dom.tabEscape : this.dom.tabConvert;
+        btn?.focus();
+        return;
+      }
+      if (e.altKey && !mod && (e.key === 't' || e.key === 'T')) {
+        if (this.opts.surface === 'panel') {
+          e.preventDefault();
+          void this.handleEnlarge();
+        }
+        return;
+      }
+      if (mod && e.shiftKey && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'c') {
+          e.preventDefault();
+          void this.handleCopy();
+          return;
+        }
+        if (k === 's') {
+          e.preventDefault();
+          this.dom.btnDownload.click();
+          return;
+        }
+        if (k === 'a') {
+          e.preventDefault();
+          this.selectAllOutput();
+          return;
+        }
+      }
+      if (e.key === 'Escape') {
+        if (this.closeCompare()) {
+          e.preventDefault();
+          return;
+        }
+        if (closeOpenSelect()) return;
+        const focusInCm = (document.activeElement as HTMLElement | null)?.closest?.('.cm-editor');
+        if (!focusInCm && this.opts.surface === 'panel') {
+          e.preventDefault();
+          void closeSidePanel();
+        }
+      }
+    });
+  }
+
+  /** K2 的出口：一键全选输出区并聚焦，方便直接 Ctrl+C 手动复制 */
+  private selectAllOutput(): void {
+    this.out.view.dispatch({ selection: { anchor: 0, head: this.out.view.state.doc.length } });
+    this.out.view.focus();
+  }
+
+  // ── v1.5 片段（D26）：纯内存，绝不落盘（FR-H4） ──────────────────
+
+  private renderSnippets(): void {
+    document.getElementById('snippetBar')?.remove();
+    if (this.snippets.length === 0) return;
+    const bar = document.createElement('div');
+    bar.className = 'snippetbar';
+    bar.id = 'snippetBar';
+    const tip = document.createElement('span');
+    tip.className = 'snippetbar__tip';
+    tip.textContent = '片段（仅本会话）：';
+    bar.appendChild(tip);
+    this.snippets.forEach((s, i) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'snippetbar__chip';
+      chip.title = s.slice(0, 200);
+      chip.textContent = s.replace(/\s+/g, ' ').slice(0, 18) || '(空)';
+      chip.addEventListener('click', () => {
+        this.setInput(s);
+        this.setStatus(`已载入片段 ${i + 1}`);
+      });
+      bar.appendChild(chip);
+    });
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'btn btn--ghost snippetbar__clear';
+    clear.textContent = '清空片段';
+    clear.addEventListener('click', () => {
+      this.snippets = [];
+      this.renderSnippets();
+    });
+    bar.appendChild(clear);
+    this.mountBar(bar);
+  }
+
+  // ── v1.5 对比浮层（D26）：并排显示输入与输出，行级标记差异 ─────────
+
+  private compareEl: HTMLElement | null = null;
+
+  private openCompare(): void {
+    this.closeCompare();
+    const inText = this.in.getDoc();
+    const outText = this.tab === 'escape' ? this.escapeOutput : (this.state?.output ?? '');
+    if (!inText.trim() && !outText) {
+      this.setStatus('没有可对比的内容');
+      return;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'cmp';
+    overlay.id = 'compareOverlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-label', '输入与输出对比');
+    const inLines = inText.split('\n');
+    const outLines = outText.split('\n');
+    const rows = Math.max(inLines.length, outLines.length);
+    const head = document.createElement('div');
+    head.className = 'cmp__head';
+    const title = document.createElement('span');
+    title.className = 'cmp__title';
+    title.textContent = `对比：输入 ${inLines.length} 行 · 输出 ${outLines.length} 行（高亮 = 与对侧同位置不同）`;
+    head.appendChild(title);
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'btn btn--ghost';
+    closeBtn.textContent = '关闭 (Esc)';
+    closeBtn.addEventListener('click', () => this.closeCompare());
+    head.appendChild(closeBtn);
+    overlay.appendChild(head);
+    const body = document.createElement('div');
+    body.className = 'cmp__body';
+    const left = document.createElement('pre');
+    const right = document.createElement('pre');
+    left.className = 'cmp__col';
+    right.className = 'cmp__col';
+    for (let i = 0; i < rows; i++) {
+      const a = inLines[i];
+      const b = outLines[i];
+      for (const [col, line] of [
+        [left, a],
+        [right, b],
+      ] as Array<[HTMLElement, string | undefined]>) {
+        const div = document.createElement('div');
+        div.className = 'cmp__row' + (a !== b ? ' cmp__row--diff' : '');
+        div.textContent = line ?? '';
+        col.appendChild(div);
+      }
+    }
+    body.appendChild(left);
+    body.appendChild(right);
+    overlay.appendChild(body);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) this.closeCompare();
+    });
+    document.body.appendChild(overlay);
+    this.compareEl = overlay;
+  }
+
+  private closeCompare(): boolean {
+    if (!this.compareEl) return false;
+    this.compareEl.remove();
+    this.compareEl = null;
+    return true;
   }
 
   /** 切换 tab（FR-L1 / FR-L4 / FR-L3） */
@@ -762,6 +1102,8 @@ export class AppController {
     }
     // FR-I5：方向二选一常驻显示，选中态一眼可见
     if (this.dom.escapeDirSeg) this.dom.escapeDirSeg.hidden = !isEscape;
+    // v1.5 / D3：包裹外层引号只在转义 tab 显示
+    if (this.dom.wrapQuotesWrap) this.dom.wrapQuotesWrap.hidden = !isEscape;
     for (const [btn, dir] of [
       [this.dom.escapeDirDecode, 'decode'],
       [this.dom.escapeDirEncode, 'encode'],
@@ -771,24 +1113,57 @@ export class AppController {
       btn.classList.toggle('seg__btn--on', on);
       btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
-    // 转义 tab 用「反向：xxx」替代「转换」—— 文案明确说出会变成哪个方向
-    this.dom.btnConvert.textContent = isEscape
-      ? '反向：' + ESCAPE_DIR_LABEL[oppositeDir(this.escapeDir)]
-      : '转换';
-    this.dom.btnFormat.hidden = isEscape || !isFormat;
-    this.dom.btnCompact.hidden = isEscape || !isFormat;
+    // 转义 tab 用「反向：xxx」替代「转换」—— 文案明确说出会变成哪个方向；
+    // 非转义 tab：超大文本时恢复本名「转换」（实时转换已关，它是唯一入口），
+    // 其余时候叫「重新转换」（实时转换已给出结果，它只是手动重跑）。D16。
+    if (isEscape) {
+      this.dom.btnConvert.textContent = '反向：' + ESCAPE_DIR_LABEL[oppositeDir(this.escapeDir)];
+    } else {
+      this.dom.btnConvert.textContent = this.oversize ? '转换' : '重新转换';
+    }
+    // v1.5 / D6：档位按钮仍只在格式化 tab；「美化/压缩」开放到转换 tab
+    // （转换 tab 原先只能输出 2 空格缩进，压不成一行）。
+    this.dom.btnFormat.hidden = !isFormat;
+    this.dom.btnCompact.hidden = isEscape;
     if (isFormat) {
       this.dom.btnFormat.textContent = this.strict ? '档位：严格' : '档位：容错';
       this.dom.btnCompact.textContent = this.compact ? '缩进：压缩' : '缩进：美化';
+    } else {
+      // 转换 tab：单按钮直接切换（同一按钮来回按）
+      this.dom.btnCompact.textContent = this.compact ? '美化' : '压缩';
     }
+    // v1.5 / D26：片段 / 对比在转义 tab 也可用（对比同样有意义：原文 vs 转义结果）
+    if (this.dom.btnSnippet) this.dom.btnSnippet.hidden = false;
+    if (this.dom.btnCompare) this.dom.btnCompare.hidden = false;
     for (const select of this.selects) select.sync();
     const arrow = this.dom.root?.querySelector<HTMLElement>('.detectbar__arrow');
     if (arrow) arrow.hidden = isFormat || isEscape;
-    // v1.4：路径条只在格式化 tab 出现；切出即隐藏并清空（FR-P9）
+    // v1.5 / D25：路径条在格式化与转换 tab 出现（转义 tab 是纯文本通道）；切出即隐藏并清空
     if (this.dom.pathBar) {
-      this.dom.pathBar.hidden = !isFormat;
-      if (!isFormat) this.clearPath();
+      this.dom.pathBar.hidden = isEscape;
+      if (isEscape) this.clearPath();
     }
+    // v1.5 / D11：tabpanel 的 labelledby 动态指向当前选中的 tab
+    const activeTabId = this.tab === 'format' ? 'tabFormat' : this.tab === 'escape' ? 'tabEscape' : 'tabConvert';
+    this.dom.paneIn?.setAttribute('aria-labelledby', activeTabId);
+    this.dom.paneOut?.setAttribute('aria-labelledby', activeTabId);
+    // v1.5 / D1：格式化 tab 下 Map 来源的回退标签（run 里更新文案与显隐）
+    this.syncSameTargetLabel();
+  }
+
+  /** v1.5 / D1：格式化 tab 且来源为 Map 时，明示「→ Python 字面量」 */
+  private syncSameTargetLabel(): void {
+    const label = this.dom.sameTargetLabel;
+    if (!label) return;
+    const r = this.state;
+    const show =
+      this.tab === 'format' &&
+      !!r &&
+      r.status !== 'error' &&
+      r.status !== 'timeout' &&
+      r.source === 'map' &&
+      r.sameTargetFallback === true;
+    label.hidden = !show;
   }
 
   /** FR-K2：格式化 tab 的严格/容错档位切换 */
@@ -819,15 +1194,18 @@ export class AppController {
     this.run(this.in.getDoc());
   }
 
-  /** 统一维护「手动锁定」状态与判定条标记（FR-B5/B7/B10） */
+  /** 统一维护「手动锁定」状态与判定条标记（FR-B5/B7/B10）
+   *  v1.5 / D8：不再递增 prefsRevision —— 锁定来源不是持久化偏好，
+   *  不应让迟到的 prefs 补齐整个作废。 */
   private setLocked(v: SourceFormat | null): void {
-    this.prefsRevision++;
     this.locked = v;
     this.dom.lockBadge.hidden = v === null;
     this.dom.resetAuto.hidden = v === null;
   }
 
   private async persist(): Promise<void> {
+    // v1.5 / D8：prefsRevision 只在「显式偏好变更」时递增（persist 是唯一调用点），
+    // applyPrefsWhenReady 靠它识别「prefs 已过期，不要覆盖用户的新选择」。
     this.prefsRevision++;
     await savePrefs({
       splitRatio: this.splitRatio,
@@ -836,12 +1214,12 @@ export class AppController {
       target: this.target,
       strict: this.strict,
       escapeDir: this.escapeDir,
+      wrapQuotes: this.wrapQuotes,
       hintWidth: this.hintWidthDismissed,
     });
   }
 
   private schedule(): void {
-    this.prefsRevision++;
     if (this.timer) window.clearTimeout(this.timer);
     this.timer = undefined;
     this.strippedPrefix = '';
@@ -865,11 +1243,48 @@ export class AppController {
       this.out.setHighlight(chars <= T1);
     });
     if (chars > T2) {
-      this.setStatus('文本过大，已关闭实时转换，请点「转换」');
+      // v1.5 / D19：阈值放宽到 1M 后仍超限的，给「仍要转换」一键入口，
+      // 而不是让用户自己去猜按钮还能不能用。
+      this.oversize = true;
+      this.syncTabControls();
+      this.renderOversizeHint();
+      this.setStatus('文本过大，已关闭实时转换');
       return;
     }
+    this.oversize = false;
+    this.clearOversizeHint();
+    this.syncTabControls();
     this.setStatus('待处理');
     this.timer = window.setTimeout(() => this.run(this.in.getDoc()), chars > T1 ? 300 : 200);
+  }
+
+  /** v1.5 / D19：「文本过大」提示条 + 仍要转换的一键入口 */
+  private renderOversizeHint(): void {
+    if (document.getElementById('oversizeBox')) return; // 大文本连续输入时只建一次
+    const box = document.createElement('div');
+    box.className = 'suggest';
+    box.id = 'oversizeBox';
+    box.setAttribute('role', 'status');
+    const tip = document.createElement('span');
+    tip.className = 'suggest__tip';
+    tip.textContent = '文本过大，已关闭实时转换。仍要转换吗？';
+    box.appendChild(tip);
+    const btn = document.createElement('button');
+    btn.className = 'btn btn--ghost suggest__btn';
+    btn.type = 'button';
+    btn.textContent = '仍要转换';
+    btn.addEventListener('click', () => {
+      this.clearOversizeHint();
+      this.setStatus('正在转换大文本…');
+      // 大文本转换放下一帧，先把「正在转换」画出来
+      window.setTimeout(() => this.run(this.in.getDoc()), 30);
+    });
+    box.appendChild(btn);
+    this.mountBar(box);
+  }
+
+  private clearOversizeHint(): void {
+    document.getElementById('oversizeBox')?.remove();
   }
 
   /** 执行一次处理：按当前 tab 分派到对应链路（FR-L1 / FR-L4） */
@@ -884,6 +1299,10 @@ export class AppController {
       this.renderEmpty();
       return;
     }
+
+    // v1.5 / D12：有输入就撤掉空态示例层
+    if (this.dom.emptyHints) this.dom.emptyHints.hidden = true;
+    this.clearOversizeHint();
 
     const chars = [...text].length;
 
@@ -928,6 +1347,7 @@ export class AppController {
     if (result.status === 'error') {
       // FR-D6/D7：高亮出错行 + 保留上一次成功结果置灰 + 禁用复制/下载
       this.dom.typePanel.hidden = true;
+      this.syncSameTargetLabel(); // v1.5 / D1：失败态不显示回退标签
       if (result.ir) this.renderTypePanel(result);
       this.out.setDoc(this.lastGoodOutput);
       this.dom.staleBadge.hidden = !this.lastGoodOutput;
@@ -975,12 +1395,17 @@ export class AppController {
     // 回退提示（FR-B11 / AC-48）
     if (result.fallbackFrom) {
       this.setStatus(`已按 ${FORMAT_TEXT[result.source]} 格式解析`);
+    } else if (result.sameTargetFallback) {
+      // v1.5 / D1：格式化 tab 下 Map 来源没有对应序列化器，回退 Python 输出。
+      // 这是唯一一种「输出语言 ≠ 来源语言」的静默变化 —— 必须在状态条说破。
+      this.setStatus(`Map.toString() 不作输出目标（有损），已按 Python 字面量输出`);
     } else {
       this.setStatus(result.fixes.length ? `已修正 · ${FORMAT_TEXT[result.outputLang]}` : `已完成 · ${FORMAT_TEXT[result.outputLang]}`);
     }
 
     this.clearSuggestion();
     this.clearPrefixHint();
+    this.syncSameTargetLabel();
 
     // 类型面板（FR-C11 / D-2）
     this.renderTypePanel(result);
@@ -995,7 +1420,7 @@ export class AppController {
    * 不经过 IR —— 绝不尝试解析输入结构。
    */
   private runEscape(text: string): void {
-    const res = escapeText(text, this.escapeStyle, this.escapeDir);
+    const res = escapeText(text, this.escapeStyle, this.escapeDir, { wrapQuotes: this.wrapQuotes });
     this.escapeOutput = res.output;
     this.escapeError = res.error;
 
@@ -1029,8 +1454,14 @@ export class AppController {
   }
 
   private renderTypePanel(r: ConvertResult): void {
-    // 仅 Map 模式提供类型下拉
-    if (r.source !== 'map') {
+    // v1.5 / D20：类型调整开放到转换 tab 的所有来源。
+    // overrides.ts 本来就是通用实现（对任意 IR 生效），原先只有 Map 有 UI 入口；
+    // 「把 1 当字符串 '1'」在跨语言转换里同样是真实需求。
+    // 格式化 tab 仍保持 Map 专属（同语言规范化没有类型歧义要修）。
+    const allowed =
+      this.tab === 'convert' ||
+      (this.tab === 'format' && r.source === 'map');
+    if (!allowed) {
       this.dom.typePanel.hidden = true;
       return;
     }
@@ -1079,34 +1510,62 @@ export class AppController {
   /**
    * FR-D10：解析失败且未手动锁定格式时，提示可切换来源格式并提供一键入口。
    * 建议来自 detect 打分（复用同一份 Token 流），不额外扫描。
+   *
+   * v1.5 / D5：格式化 tab 默认就是严格档，而最常见的修复其实是「切容错档」——
+   * 原先建议条只会劝用户换来源格式。现在两条建议并列给出。
    */
   private renderSuggestion(text: string, r: ConvertResult): void {
     this.clearSuggestion();
-    if (this.locked || r.status !== 'error') return;
-    const list = suggestFormats(text, r.source, 2);
-    if (list.length === 0) return;
+    if (r.status !== 'error') return;
 
     const box = document.createElement('div');
     box.className = 'suggest';
     box.id = 'suggestBox';
-    const tip = document.createElement('span');
-    tip.className = 'suggest__tip';
-    tip.textContent = '可尝试手动切换来源格式：';
-    box.appendChild(tip);
-    for (const s of list) {
+    box.setAttribute('role', 'status');
+    let hasAny = false;
+
+    if (this.tab === 'format' && this.strict) {
+      const tip = document.createElement('span');
+      tip.className = 'suggest__tip';
+      tip.textContent = '严格档下任何偏差都报错：';
+      box.appendChild(tip);
       const btn = document.createElement('button');
       btn.className = 'btn btn--ghost suggest__btn';
       btn.type = 'button';
-      btn.textContent = s.label;
-      btn.title = s.reason;
+      btn.textContent = '改用容错档重试';
+      btn.title = '容错档会自动修复尾随逗号 / 单引号 / 裸键名等常见偏差';
       btn.addEventListener('click', () => {
-        this.dom.fmtSelect.value = s.format;
-        this.setLocked(s.format);
-        this.run(this.in.getDoc());
+        if (this.strict) this.toggleStrict(); // toggleStrict 内部会重跑
       });
       box.appendChild(btn);
+      hasAny = true;
     }
-    this.mountBar(box);
+
+    if (!this.locked) {
+      const list = suggestFormats(text, r.source, 2);
+      if (list.length > 0) {
+        const tip = document.createElement('span');
+        tip.className = 'suggest__tip';
+        tip.textContent = '可尝试手动切换来源格式：';
+        box.appendChild(tip);
+        for (const s of list) {
+          const btn = document.createElement('button');
+          btn.className = 'btn btn--ghost suggest__btn';
+          btn.type = 'button';
+          btn.textContent = s.label;
+          btn.title = s.reason;
+          btn.addEventListener('click', () => {
+            this.dom.fmtSelect.value = s.format;
+            this.setLocked(s.format);
+            this.run(this.in.getDoc());
+          });
+          box.appendChild(btn);
+        }
+        hasAny = true;
+      }
+    }
+
+    if (hasAny) this.mountBar(box);
   }
 
   private clearSuggestion(): void {
@@ -1144,6 +1603,7 @@ export class AppController {
     const box = document.createElement('div');
     box.className = 'suggest';
     box.id = 'prefixHintBox';
+    box.setAttribute('role', 'status'); // v1.5 / D11：读屏可感知
 
     const tip = document.createElement('span');
     tip.className = 'suggest__tip';
@@ -1210,7 +1670,11 @@ export class AppController {
     this.dom.typePanel.hidden = true;
     this.clearSuggestion();
     this.clearPrefixHint();
+    this.clearOversizeHint();
     this.clearPath();
+    // v1.5 / D12：空态给一键示例，并撤掉判定条上误导性的「标准 JSON」默认值
+    if (this.dom.emptyHints) this.dom.emptyHints.hidden = false;
+    this.dom.fmtLabel.textContent = '待输入';
     this.updateStats('', '');
   }
 
@@ -1272,6 +1736,7 @@ export class AppController {
         strict: this.strict,
         escapeStyle: this.escapeStyle,
         escapeDir: this.escapeDir,
+        wrapQuotes: this.wrapQuotes,
       }, sessionId);
       if (!written) {
         this.setStatus('会话交接失败，请重试；当前输入已保留', 'error');
@@ -1422,7 +1887,6 @@ export class AppController {
 
   /** 供放大页与外部驱动（自动化测试）写入输入内容 */
   setInput(text: string): void {
-    this.prefsRevision++;
     if (!text.trim()) { this.panel.clear(); this.setLocked(null); }
     this.in.setDoc(text);
     this.run(text);
@@ -1443,7 +1907,6 @@ export class AppController {
 
   /** 程序化设置目标格式（FR-A17），供测试与放大页继承驱动 */
   setTarget(t: TargetFormat | 'auto'): void {
-    this.prefsRevision++;
     this.target = t;
     if (this.dom.targetSelect) this.dom.targetSelect.value = t;
     this.run(this.in.getDoc());
@@ -1451,7 +1914,6 @@ export class AppController {
 
   /** 程序化设置转义风格与方向（FR-I2 / FR-I5），供测试驱动 */
   setEscape(style: EscapeStyle, dir?: EscapeDir): void {
-    this.prefsRevision++;
     this.escapeStyle = style;
     if (dir) this.escapeDir = dir;
     if (this.dom.escapeStyleSelect) this.dom.escapeStyleSelect.value = style;

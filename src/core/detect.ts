@@ -88,9 +88,13 @@ export function detect(tokens: Token[], rawText: string): DetectResult {
       const isValue = prev?.type === 'punct' && (prev.raw === ':' || prev.raw === '=' || prev.raw === ',' || prev.raw === '[' || prev.raw === '(');
       const isKey = next?.type === 'punct' && (next.raw === ':' || next.raw === '=');
       if (t.quote === "'" && (isKey || isValue) && counts.pyQuote < CAP) {
+        // 【v1.5 / D9】单引号在标准 JSON 里绝对非法，是最强的格式证据。
+        // 原权重 +2 低于 JSON 裸字面量 +3，导致 `{'a': true}` 这类真实脏数据
+        // 被判成 JSON 并在严格档直接报错。提到 +4 后单引号压过裸字面量；
+        // 封顶 CAP=2 仍生效，避免长文本偏置。
         counts.pyQuote++;
-        scores.python += 2;
-        reasons.push('单引号键或值 (+2)');
+        scores.python += 4;
+        reasons.push('单引号键或值 (+4，JSON 绝对非法)');
       } else if (t.quote === '"' && isKey && counts.jsonKey < CAP) {
         counts.jsonKey++;
         scores.json += 2;

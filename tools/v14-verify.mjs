@@ -7,6 +7,13 @@
  *
  * 覆盖：AC-89/90/92/93/94/95/96/97/98/99/101 + AC-37 零网络回归 + AC-102 观感
  * 覆盖不了：AC-81/82（依赖真实扩展上下文与 service worker）
+ *
+ * v1.5（全面梳理报告的贯穿性建议）：本脚本升级为「改 UI 必跑」的第二门禁，
+ * 固化三类 jsdom 测不出的断言 ——
+ *  ① D2：CM6 部件（行号槽 / 活动行）令牌是否落地（getComputedStyle）
+ *  ② D7：resize 后路径条中段省略是否仍无溢出
+ *  ③ D10：类型面板里的自绘下拉浮层是否被滚动容器裁切
+ *  另有 K1：Ctrl+F 不再被 CM6 拦截（白名单扩展后应无 .cm-panels）
  */
 import puppeteer from '/Users/guhui/.workbuddy/binaries/node/workspace/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js';
 import fs from 'node:fs';
@@ -161,6 +168,43 @@ for (const width of WIDTHS) {
   await fill(page, DOC);
   await sleep(300);
 
+  // ── v1.5 / D2：CM6 部件令牌落地（jsdom 无布局，只能在这里量） ──
+  const cmTheme = await page.evaluate(() => {
+    const gutters = document.querySelector('#editorIn .cm-gutters');
+    const active = document.querySelector('#editorIn .cm-activeLine');
+    const cs = gutters ? getComputedStyle(gutters) : null;
+    return {
+      hasGutters: !!gutters,
+      gutterBg: cs ? cs.backgroundColor : '(missing)',
+      gutterFont: cs ? cs.fontFamily : '(missing)',
+      // CM6 默认活动行色是 #fffecc / 透明 —— 令牌化后应是 signal 的浅混合色
+      activeBg: active ? getComputedStyle(active).backgroundColor : '(none)',
+    };
+  });
+  check(
+    `D2/${width}px CM6 行号槽已令牌化（非默认灰条）`,
+    cmTheme.hasGutters &&
+      cmTheme.gutterBg !== 'rgba(0, 0, 0, 0)' &&
+      cmTheme.gutterBg !== 'rgb(245, 242, 240)' && // CM6 默认 gutters 底色
+      cmTheme.gutterFont.includes('Plex Mono'),
+    cmTheme,
+  );
+  check(
+    `D2/${width}px CM6 活动行已令牌化（非默认黄条）`,
+    cmTheme.activeBg !== '(none)' &&
+      cmTheme.activeBg !== 'rgba(0, 0, 0, 0)' &&
+      cmTheme.activeBg !== 'rgb(255, 254, 204)', // CM6 默认活动行色
+    cmTheme,
+  );
+
+  // ── v1.5 / K1：Ctrl+F 不再被 CM6 拦截（白名单扩展后无搜索面板） ──
+  await page.keyboard.down('Control');
+  await page.keyboard.press('KeyF');
+  await page.keyboard.up('Control');
+  await sleep(180);
+  const panelCount = await page.evaluate(() => document.querySelectorAll('.cm-panels').length);
+  check(`K1/${width}px Ctrl+F 不再弹出 CM6 搜索面板`, panelCount === 0, { panelCount });
+
   // ── 布局：路径条自身与关键控件不得被裁（AC-98） ──
   const layout = await page.evaluate((vw) => {
     const doc = document.documentElement;
@@ -236,6 +280,16 @@ for (const width of WIDTHS) {
   if (width === 320) {
     check(`AC-98/320px 溢出时保留尾部字段`, !p.ellipsis || p.text.endsWith('targetFieldName'), p);
   }
+
+  // ── v1.5 / D7：视口宽度变化后路径省略仍成立（resize → rAF → fitPath） ──
+  if (width > 320) {
+    await page.setViewport({ width: width - 60, height: 900 });
+    await sleep(260);
+    p = await readPath(page);
+    check(`D7/${width}px 收窄 60px 后路径仍无溢出`, !p.overflow, p);
+    await page.setViewport({ width, height: 900 });
+    await sleep(260);
+  }
   await page.screenshot({ path: `${OUT}/path-${width}-deep.png` });
 
   // ── 报错态（AC-99） ──
@@ -273,7 +327,65 @@ for (const width of WIDTHS) {
   await page.click('[data-tab="format"]');
   await sleep(260);
   p = await readPath(page);
-  check(`AC-97/${width}px 切回格式化回到占位`, p.text === '点选 JSON 中的键或值' && p.copyDisabled === true, p);
+  check(`AC-97/${width}px 切回格式化回到占位`, p.text === '点选输入或输出中的键或值' && p.copyDisabled === true, p);
+
+  // ── v1.5 / D10：类型面板下拉浮层不被滚动容器裁切（360px 专项） ──
+  if (width === 360) {
+    await fill(page, '{a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8}');
+    await sleep(350);
+    const triggers = await page.$$eval('.typepanel .sel__trigger', (els) => els.length);
+    if (triggers > 0) {
+      await page.click('.typepanel .sel__trigger');
+      await sleep(160);
+      const menu = await page.evaluate(() => {
+        const m = document.querySelector('.typepanel .sel__menu');
+        if (!m) return { open: false };
+        const r = m.getBoundingClientRect();
+        return {
+          open: !m.hidden,
+          position: getComputedStyle(m).position,
+          top: Math.round(r.top),
+          bottom: Math.round(r.bottom),
+          right: Math.round(r.right),
+          vh: innerHeight,
+          vw: innerWidth,
+        };
+      });
+      check(
+        'D10/360px 类型面板下拉不被裁切（fixed 且在视口内）',
+        menu.open && menu.position === 'fixed' && menu.bottom <= menu.vh + 1 && menu.right <= menu.vw + 1,
+        menu,
+      );
+      await page.keyboard.press('Escape');
+    } else {
+      errors.push('D10: 类型面板未渲染（.sel__trigger 数量为 0）');
+    }
+
+    // ── v1.5 / D12：空态一键示例 ──
+    // fill(page, '') 无法清空（全选后 type('') 不产生任何输入），先填一个字符再退格
+    await fill(page, 'x');
+    await page.keyboard.press('Backspace');
+    await sleep(400);
+    const emptyState = await page.evaluate(() => {
+      const hints = document.getElementById('emptyHints');
+      const label = document.getElementById('fmtLabel')?.textContent?.trim();
+      const buttons = hints ? hints.querySelectorAll('[data-example]').length : 0;
+      return { visible: !!hints && !hints.hidden, label, buttons };
+    });
+    check(
+      'D12/360px 空态示例可见且判定条为「待输入」',
+      emptyState.visible && emptyState.buttons === 3 && emptyState.label === '待输入',
+      emptyState,
+    );
+    await page.click('[data-example="json"]');
+    await sleep(300);
+    const filled = await page.evaluate(() => {
+      const view = document.querySelector('#editorIn .cm-content');
+      return view ? view.textContent.length > 10 : false;
+    });
+    check('D12/360px 点击示例即灌入输入区', filled);
+    await page.screenshot({ path: `${OUT}/v15-360-empty-examples.png` });
+  }
 
   check(`AC-37/${width}px 零外部请求`, external.length === 0, external);
   await page.close();

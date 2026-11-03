@@ -25,6 +25,13 @@ const CARET = '<svg class="sel__caret" viewBox="0 0 12 12" aria-hidden="true"><p
 let openInstance: SelectHandle | null = null;
 let nextSelectId = 0;
 
+/** v1.5：关闭当前打开的下拉（全局 Esc 兜底用）。返回是否确实关了一个。 */
+export function closeOpenSelect(): boolean {
+  if (!openInstance) return false;
+  openInstance.close();
+  return true;
+}
+
 export interface SelectHandle {
   /** 关闭菜单 */
   close(): void;
@@ -124,26 +131,59 @@ export function decorateSelect(
     renderOptions();
     active = Math.max(0, native.selectedIndex);
     menu.hidden = false;
+    // v1.5 / D10：菜单用 fixed 定位锚到视口，脱离了 .typepanel 等祖先的
+    // overflow:auto / max-height 裁剪。祖先若无 transform，fixed 不受其影响。
+    // jsdom / 布局未就绪时 rect 全 0 —— 保持 CSS 默认定位，功能不受影响。
+    try {
+      const r = trigger.getBoundingClientRect();
+      if (r.width > 0 || r.height > 0) {
+        menu.style.position = 'fixed';
+        menu.style.left = `${Math.max(0, Math.round(r.left))}px`;
+        menu.style.top = `${Math.round(r.bottom + 4)}px`;
+        menu.style.minWidth = `${Math.round(r.width)}px`;
+        // 向下放不下（类型面板靠近视口底部）就向上翻
+        const vh = window.innerHeight || 0;
+        const mh = menu.offsetHeight || 0;
+        if (vh > 0 && mh > 0 && r.bottom + 4 + mh > vh && r.top - 4 - mh >= 0) {
+          menu.style.top = `${Math.round(r.top - mh - 4)}px`;
+        }
+      }
+    } catch {
+      /* 布局未就绪：静默退回默认定位 */
+    }
     highlightOption();
     wrap.classList.add('sel--on');
     trigger.setAttribute('aria-expanded', 'true');
     openInstance = handle;
     document.addEventListener('pointerdown', onDocDown, true);
+    // fixed 定位不随滚动 —— 视口一滚就与触发器错位，干脆收起（捕获阶段，
+    // 捕获任何祖先容器滚动，typepanel 内部滚动同样触发）
+    document.addEventListener('scroll', onScrollClose, true);
   }
 
   function close(): void {
     if (menu.hidden) return;
     menu.hidden = true;
+    // 清掉 open() 写的视口定位内联样式，回到 CSS 默认（absolute）
+    menu.style.removeProperty('position');
+    menu.style.removeProperty('left');
+    menu.style.removeProperty('top');
+    menu.style.removeProperty('min-width');
     wrap.classList.remove('sel--on');
     trigger.setAttribute('aria-expanded', 'false');
     trigger.removeAttribute('aria-activedescendant');
     if (openInstance === handle) openInstance = null;
     document.removeEventListener('pointerdown', onDocDown, true);
+    document.removeEventListener('scroll', onScrollClose, true);
   }
 
   /** 点击别处 / 按 Esc / 滚动时收起 */
   function onDocDown(e: Event): void {
     if (!wrap.contains(e.target as Node)) close();
+  }
+
+  function onScrollClose(): void {
+    close();
   }
 
   trigger.addEventListener('click', (e) => {
@@ -200,6 +240,7 @@ export function decorateSelect(
     native,
     destroy() {
       document.removeEventListener('pointerdown', onDocDown, true);
+      document.removeEventListener('scroll', onScrollClose, true);
       native.classList.remove('sel__native');
       native.removeAttribute('aria-hidden');
       native.removeAttribute('tabindex');

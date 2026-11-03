@@ -4,15 +4,28 @@
  * 关键约束（评审 D-4）：
  *  - 关闭高亮不得重建编辑器 —— 用 Compartment 动态卸载，保住光标/undo/滚动状态
  *  - 输出区只读（FR-F9）
+ *
+ * v1.5 / D15：放弃 `basicSetup`，改用**白名单扩展**。
+ * basicSetup 附带的 autocompletion（无 completion source，纯死重量）、
+ * foldGutter（用户不知道的「意外功能」且从未造型）、rectangularSelection /
+ * crosshairCursor / highlightSelectionMatches / searchKeymap 一概不需要。
+ * 顺带解决 K1：`Ctrl/Cmd+F` 不再被 CM6 拦截，回落到浏览器原生查找。
+ * 新增任何扩展前先问一句「这台仪器上用户用得到吗」。
  */
 
-import { EditorView, basicSetup } from 'codemirror';
 import {
-  Decoration,
-  type DecorationSet,
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars,
+  drawSelection,
+  dropCursor,
   gutter,
   GutterMarker,
   type ViewUpdate,
+  Decoration,
 } from '@codemirror/view';
 import {
   EditorState,
@@ -23,6 +36,9 @@ import {
   RangeSetBuilder,
   type Extension,
 } from '@codemirror/state';
+import { indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { json } from '@codemirror/lang-json';
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -94,15 +110,13 @@ export interface EditorHandle {
   /** 动态开关语法高亮（D-4） */
   setHighlight(on: boolean): void;
   setLang(lang: EditorLang): void;
-  setEditable(editable: boolean): void;
+  /** v1.5 / D4：运行时切换深浅色主题（跟随系统），不重建编辑器 */
+  setDark(on: boolean): void;
   /** 高亮错误行（M2-2） */
   highlightLine(line: number): void;
   clearHighlight(): void;
   destroy(): void;
 }
-
-const themeCompartment = new Compartment();
-const editableCompartment = new Compartment();
 
 export function createEditor(
   parent: HTMLElement,
@@ -116,13 +130,31 @@ export function createEditor(
     onCursor?: (offset: number) => void;
   } = {},
 ): EditorHandle {
+  // v1.5：Compartment 移到编辑器实例局部 —— 原先是模块级共享，
+  // 两个编辑器共用同一个键。虽然 Compartment 本身无状态、不会串台，
+  // 但局部化后每个实例的生命周期一目了然。
+  const themeCompartment = new Compartment();
+  const editableCompartment = new Compartment();
   const highlightCompartment = new Compartment();
   const lang = opts.lang ?? 'json';
   const readOnly = opts.readOnly ?? false;
   const dark = opts.dark ?? false;
 
   const extensions = [
-    basicSetup,
+    // v1.5 / D15 白名单：只装这台仪器真正用到的扩展
+    lineNumbers(),
+    highlightActiveLineGutter(),
+    highlightSpecialChars(),
+    history(),
+    drawSelection(),
+    dropCursor(),
+    EditorState.allowMultipleSelections.of(true),
+    indentOnInput(),
+    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    bracketMatching(),
+    closeBrackets(),
+    highlightActiveLine(),
+    keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
     errorLineField,
     errorLineDeco,
     errorGutter,
@@ -194,12 +226,14 @@ export function createEditor(
         });
       }
     },
-    setEditable(editable: boolean) {
+    /**
+     * v1.5 / D4：系统深浅色切换时动态换主题，不重建编辑器（保住 undo / 滚动）。
+     * 同时兑现了原先「themeCompartment 声明了却从未 reconfigure」的死代码；
+     * 零调用的 setEditable（原死代码之二）已删除 —— 只读性由构造参数一次定型。
+     */
+    setDark(on: boolean): void {
       view.dispatch({
-        effects: editableCompartment.reconfigure([
-          EditorView.editable.of(editable),
-          EditorState.readOnly.of(!editable),
-        ]),
+        effects: themeCompartment.reconfigure(on ? [oneDark] : []),
       });
     },
     /** 高亮错误行并滚动到视野内（M2-2） */

@@ -10,7 +10,7 @@
  *      全部失败 → errors.from(failure)
  */
 
-import { lex, type Mark, type Token } from './lexer.js';
+import { lex, significant, type Mark, type Token } from './lexer.js';
 import { detect, fallbackOrder } from './detect.js';
 import { parseJson } from './parse/json.js';
 import { parsePython } from './parse/python.js';
@@ -60,6 +60,12 @@ export interface ConvertResult {
   prefixHint?: PrefixHint;
   /** 实际生效的目标（'same' 解析后）；map 来源取 'same' 会回退为 auto（O-7） */
   resolvedTarget?: TargetFormat | 'auto';
+  /**
+   * v1.5 / D1：格式化 tab（target='same'）遇到 Map 来源时会静默回退到 Python 输出。
+   * 该标记让调用方**必须**把这次语言变化明示给用户，兑现 types.ts 里
+   * 「绝不静默改格式」的承诺。
+   */
+  sameTargetFallback?: boolean;
   stats: { lines: number; chars: number };
 }
 
@@ -123,50 +129,35 @@ export function computeStats(text: string): { lines: number; chars: number } {
   return { lines, chars: [...text].length };
 }
 
+/**
+ * v1.5 / D18：原来遍历 IR 两遍（先扫出重复键集合，再数出现次数），
+ * 且声明了一个只 clear() 从不使用的 `seen`。合并为一次遍历：
+ * 每个对象节点用 freq 表统计，>1 的键直接累加 count 并收进 keys。
+ */
 function collectDuplicates(ir: JVal, deadline: Deadline): DuplicateInfo | undefined {
-  const seen = new Map<string, number>();
-  const dupKeys = new Set<string>();
+  let count = 0;
+  const keys: string[] = [];
   function walk(n: JVal): void {
     deadline.check();
     if (n.k !== 'obj') {
-      if (n.k === 'arr') n.items.forEach(walk);
-      return;
-    }
-    const local = new Set<string>();
-    for (const e of n.entries) {
-      const k = keyToString(e.key);
-      if (local.has(k)) dupKeys.add(k);
-      local.add(k);
-      walk(e.val);
-    }
-  }
-  walk(ir);
-  if (dupKeys.size === 0) return undefined;
-  let count = 0;
-  const keys: string[] = [];
-  // 统计重复条目数
-  function countDups(n: JVal): void {
-    deadline.check();
-    if (n.k !== 'obj') {
-      if (n.k === 'arr') n.items.forEach(countDups);
+      if (n.k === 'arr') for (const item of n.items) walk(item);
       return;
     }
     const freq = new Map<string, number>();
     for (const e of n.entries) {
       const k = keyToString(e.key);
       freq.set(k, (freq.get(k) ?? 0) + 1);
-      countDups(e.val);
+      walk(e.val);
     }
-    for (const [k, v] of freq) {
-      if (v > 1) {
-        count += v - 1;
+    for (const [k, times] of freq) {
+      if (times > 1) {
+        count += times - 1;
         keys.push(k);
       }
     }
   }
-  countDups(ir);
-  seen.clear();
-  return { count, keys };
+  walk(ir);
+  return count === 0 ? undefined : { count, keys };
 }
 
 export function convert(text: string, opts: ConvertOptions = {}): ConvertResult {
@@ -221,6 +212,23 @@ function convertWithDeadline(text: string, opts: ConvertOptions, deadline: Deadl
   const lexed = opts.tokens ? null : lex(working, { deadline });
   const tokens = opts.tokens ?? lexed!.tokens;
   const sig = tokens;
+
+  // v1.5 / D22：只有注释与空白时，解析器会在 need() 里报「内容不完整」——
+  // 用户看到的是语法错误，但真实情况是「压根没有可转换的内容」。
+  // 在判定/解析之前就按空态给出贴切文案，避免把空输入伪装成语法错误。
+  if (significant(tokens).length === 0) {
+    return {
+      ...emptyBase(opts.force ?? 'json', !!opts.force),
+      status: 'error',
+      error: {
+        kind: 'empty_content',
+        line: 1,
+        col: 0,
+        message: '没有可转换的有效内容（仅含注释或空白）',
+      },
+    };
+  }
+
   const primary: SourceFormat = opts.force ?? detect(tokens, working).format;
   const locked = !!opts.force;
 
@@ -329,7 +337,8 @@ function buildResult(
   deadline: Deadline,
 ): ConvertResult {
   const fixes = dedupeFixes(marksToFixes([...lexMarks, ...marks].filter((mark) => !(opts.strictOnly && fmt === 'python' && (mark.type === 'trailing_comma' || mark.type === 'nonstring_key')))));
-  const resolved: TargetFormat | 'auto' = opts.target === 'same' ? sameTarget(fmt) : (opts.target ?? 'auto');
+  const sameFallback = opts.target === 'same' && sameTarget(fmt) === 'auto';
+  const resolved: TargetFormat | 'auto' = sameFallback ? 'auto' : opts.target === 'same' ? sameTarget(fmt) : (opts.target ?? 'auto');
   const outLang = outputLangFor(fmt, resolved);
   let output: string;
   try {
@@ -352,6 +361,7 @@ function buildResult(
     output,
     outputLang: outLang,
     resolvedTarget: resolved,
+    sameTargetFallback: sameFallback || undefined,
     ir,
     values,
     fixes,

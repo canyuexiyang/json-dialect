@@ -27,6 +27,8 @@ export interface SessionState {
   strict?: boolean;
   escapeStyle?: string;
   escapeDir?: string;
+  /** v1.5 / D3：包裹外层引号开关一并继承 */
+  wrapQuotes?: boolean;
 }
 
 const KEY = 'json-dialect-session';
@@ -126,6 +128,8 @@ export interface Prefs {
   strict?: boolean;
   /** FR-I5：转义 tab 的方向（去除转义 / 增加转义），历史偏好覆盖默认值 */
   escapeDir?: string;
+  /** v1.5 / D3：转义 tab encode 是否包裹外层引号 */
+  wrapQuotes?: boolean;
   /** v1.3.1：宽度引导条已被用户关闭（侧边栏宽度无 API，只能提示一次） */
   hintWidth?: boolean;
 }
