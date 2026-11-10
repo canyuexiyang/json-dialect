@@ -12,7 +12,9 @@
  *  - N09 computeStats 码点计数（合并迭代后结果不变）
  *  - N11 放大页入口 await 不得排在 mountShell 之前 + inheritFromSession 可重放
  *
- * 其它仍属人工/真机：深色 computed style、Tab 焦点链、逐键可达性（v1.5.1-6）。
+ * 深色 computed style 由 v1.6 的 verify:ui 断言覆盖；Tab 焦点链 / 逐键可达性 /
+ * Esc 二次确认已纳入 verify:ui 66 项。仍需人工：AC-82 跨标签页存活、Esc 重开恢复、
+ * 扩展更新后 worker 生效与 MV3 CSP。
  */
 
 // @vitest-environment jsdom
@@ -270,6 +272,32 @@ describe('v1.5.1 回归：P0 修复', () => {
     expect(ctrl.currentTab).toBe('convert');
     expect(ctrl.input).toBe('{"z": 9}');
     expect(ctrl.output).toContain('"z"');
+  });
+
+  // ── 以下三条为 v1.6 搭车回归（复用同一套 DOM 与监听清理，避免重复 mount） ──
+  it('v1.6 / N16：切 tab 时关掉上一个通道的对比浮层', () => {
+    ctrl.setInput('{"a": 1}');
+    dom.btnCompare!.click();
+    expect(document.getElementById('compareOverlay')).not.toBeNull();
+    ctrl.switchTab('escape');
+    expect(document.getElementById('compareOverlay')).toBeNull();
+  });
+
+  it('v1.6 / N16：跨 tab 载入片段时明示来源通道', () => {
+    ctrl.setInput('{"fmt": 1}');
+    dom.btnSnippet!.click();
+    expect(document.querySelector<HTMLElement>('.snippetbar__chip')?.dataset.fromTab).toBe('format');
+    ctrl.switchTab('convert');
+    document.querySelector<HTMLButtonElement>('.snippetbar__chip')?.click();
+    expect(dom.statusMsg.textContent).toContain('来源通道不同');
+  });
+
+  it('v1.6 / N12：对比浮层有行数上限与大文本保护（源码断言）', () => {
+    const src = readFileSync('src/ui/controller.ts', 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    expect(src).toContain('200_000');
+    expect(src).toContain('MAX_ROWS');
   });
 });
 

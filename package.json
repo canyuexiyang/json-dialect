@@ -1,6 +1,6 @@
 {
   "name": "json-dialect",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "private": true,
   "description": "Python 字面量 ↔ Java/标准 JSON 双向转换的纯本地 Chrome 扩展（MV3）",
   "type": "module",
@@ -46,6 +46,7 @@
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/search": "^6.7.2",
     "@codemirror/theme-one-dark": "^6.1.3"
   }
 }

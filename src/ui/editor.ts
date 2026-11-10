@@ -8,9 +8,13 @@
  * v1.5 / D15：放弃 `basicSetup`，改用**白名单扩展**。
  * basicSetup 附带的 autocompletion（无 completion source，纯死重量）、
  * foldGutter（用户不知道的「意外功能」且从未造型）、rectangularSelection /
- * crosshairCursor / highlightSelectionMatches / searchKeymap 一概不需要。
- * 顺带解决 K1：`Ctrl/Cmd+F` 不再被 CM6 拦截，回落到浏览器原生查找。
+ * crosshairCursor / highlightSelectionMatches 一概不需要。
  * 新增任何扩展前先问一句「这台仪器上用户用得到吗」。
+ *
+ * v1.6 / E4：**恢复编辑器内查找** —— 白名单移除 searchKeymap 后只剩浏览器原生
+ * Ctrl+F，而 CM6 是虚拟滚动，浏览器查找命中率很差（看不见的 DOM 根本不存在）。
+ * 这次只加 `search()` + `searchKeymap` 两个必要扩展，搜索面板已在 styles.css
+ * 里令牌化；这是 v1.5「Ctrl+F 回落浏览器」决策的**有意反转**，PRD 已并入正文。
  */
 
 import {
@@ -39,6 +43,7 @@ import {
 import { indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { json } from '@codemirror/lang-json';
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -156,9 +161,20 @@ export function createEditor(
     bracketMatching(),
     closeBrackets(),
     highlightActiveLine(),
+    // v1.6 / E4：编辑器内查找（Ctrl/Cmd+F）。两个编辑器都能用，
+    // search() 提供状态与面板，searchKeymap 只负责快捷键。
+    search({ top: true }),
     // v1.5.1 / N04：刻意不装 indentWithTab —— 它会吃掉 Tab / Shift+Tab，
     // 键盘用户永远走不出编辑器。缩进仍可用 defaultKeymap 的 Mod-[ / Mod-]。
-    keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...(readOnly ? [] : historyKeymap)]),
+    keymap.of([
+      ...closeBracketsKeymap,
+      ...defaultKeymap,
+      ...(readOnly ? [] : historyKeymap),
+      ...searchKeymap,
+      // macOS 上 Mod 是 Cmd，而 Cmd+F 被浏览器查找占用（网页收不到 keydown）；
+      // 显式补一条 Control-f，让 Mac 用户与真机脚本都能打开编辑器内查找。
+      { key: 'Control-f', run: openSearchPanel },
+    ]),
     errorLineField,
     errorLineDeco,
     errorGutter,

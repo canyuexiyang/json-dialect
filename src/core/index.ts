@@ -264,7 +264,7 @@ function convertWithDeadline(text: string, opts: ConvertOptions, deadline: Deadl
         stats,
         false,
         oi > 0 ? primary : undefined,
-        [...lexMarks, ...(!strictOnly && fmt !== 'map' ? tokens.filter((t) => t.type === 'comment').flatMap((t) => t.marks) : [])],
+        [...lexMarks, ...(fmt !== 'map' ? tokens.filter((t) => t.type === 'comment').flatMap((t) => t.marks) : [])],
         deadline,
       );
     } catch (e) {
@@ -293,7 +293,7 @@ function convertWithDeadline(text: string, opts: ConvertOptions, deadline: Deadl
         stats,
         true,
         oi > 0 ? primary : undefined,
-        [...lexMarks, ...(!strictOnly && fmt !== 'map' ? tokens.filter((t) => t.type === 'comment').flatMap((t) => t.marks) : [])],
+        [...lexMarks, ...(fmt !== 'map' ? tokens.filter((t) => t.type === 'comment').flatMap((t) => t.marks) : [])],
         deadline,
       );
     } catch (e) {

@@ -127,7 +127,8 @@ async function readPath(page) {
 }
 
 async function fill(page, text) {
-  await page.click('#editorIn .cm-content');
+  // 直接聚焦而非坐标点击：空态示例层覆盖在编辑器上方，点中心可能被示例按钮接走
+  await page.focus('#editorIn .cm-content');
   await page.evaluate(() => {
     const view = document.querySelector('#editorIn .cm-content')?.closest('.cm-editor');
     view?.dispatchEvent(new Event('noop'));
@@ -203,13 +204,32 @@ for (const width of WIDTHS) {
     cmTheme,
   );
 
-  // ── v1.5 / K1：Ctrl+F 不再被 CM6 拦截（白名单扩展后无搜索面板） ──
+  // ── v1.6 / E4：Ctrl+F 恢复编辑器内查找（浏览器原生查找对 CM6 虚拟滚动无效） ──
+  // macOS 的 Mod 是 Cmd，Cmd+F 被浏览器查找占用；编辑器显式补了 Control-f 键位。
+  await page.focus('#editorIn .cm-content');
   await page.keyboard.down('Control');
   await page.keyboard.press('KeyF');
   await page.keyboard.up('Control');
   await sleep(180);
-  const panelCount = await page.evaluate(() => document.querySelectorAll('.cm-panels').length);
-  check(`K1/${width}px Ctrl+F 不再弹出 CM6 搜索面板`, panelCount === 0, { panelCount });
+  const searchPanel = await page.evaluate(() => {
+    const p = document.querySelector('.cm-panels');
+    if (!p) return { open: false };
+    const input = p.querySelector('input');
+    return {
+      open: true,
+      hasInput: !!input,
+      bg: getComputedStyle(p).backgroundColor,
+      font: getComputedStyle(p).fontFamily,
+      inputBg: input ? getComputedStyle(input).backgroundColor : '',
+    };
+  });
+  check(`E4/${width}px Ctrl+F 打开编辑器内查找面板`, searchPanel.open && searchPanel.hasInput, searchPanel);
+  check(`E4/${width}px 搜索面板已令牌化（非 CM6 默认浅灰）`,
+    searchPanel.open && searchPanel.font.includes('Archivo') &&
+      searchPanel.bg !== 'rgb(245, 242, 240)' && searchPanel.bg !== 'rgba(0, 0, 0, 0)', searchPanel);
+  // 收起面板，避免它影响后续布局断言
+  await page.keyboard.press('Escape');
+  await sleep(120);
 
   // ── 布局：路径条自身与关键控件不得被裁（AC-98） ──
   const layout = await page.evaluate((vw) => {
@@ -466,10 +486,75 @@ for (const width of WIDTHS) {
     }, width);
     check(`N14/${width}px 底部工具栏在视口内且无横向滚动`,
       barFit.present && barFit.bottom <= barFit.vh + 1 && barFit.top >= 0 && !barFit.hScroll, barFit);
+
+    // ── v1.6 / N08：>50 值真降级（真机量 DOM 行数，而不是只改标题文案） ──
+    await page.click('[data-tab="convert"]');
+    await sleep(220);
+    const many = '{' + Array.from({ length: 64 }, (_, i) => `"k${i}":${i}`).join(',') + '}';
+    await fill(page, many);
+    await sleep(480);
+    const degraded = await page.evaluate(() => {
+      const panel = document.getElementById('typePanel');
+      if (!panel || panel.hidden) return { visible: false };
+      return {
+        visible: true,
+        rows: panel.querySelectorAll('.typepanel__row').length,
+        head: panel.querySelector('.typepanel__head')?.textContent ?? '',
+        hasSearch: !!panel.querySelector('.typepanel__search'),
+        hasPager: !!panel.querySelector('.typepanel__page'),
+        note: panel.querySelector('.typepanel__note')?.textContent ?? '',
+      };
+    });
+    check('N08/360px 64 个值降到 ≤20 行且给出搜索 + 分页',
+      degraded.visible && degraded.rows <= 20 && degraded.hasSearch && degraded.hasPager &&
+        degraded.head.includes('降级'), degraded);
+    check('N08/360px 面板明示内部路径口径（N18）',
+      degraded.note.includes('内部编号') && degraded.note.includes('$.'), degraded);
+    await page.screenshot({ path: `${OUT}/v16-360-typepanel-degraded.png` });
   }
 
   check(`AC-37/${width}px 零外部请求`, external.length === 0, external);
   await page.close();
+}
+
+// ── v1.6 / N13：深色 computed style（jsdom 无布局，只能真机量） ──
+{
+  const dark = await browser.newPage();
+  await dark.setViewport({ width: 360, height: 900, deviceScaleFactor: 2 });
+  await dark.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
+  await dark.evaluateOnNewDocument(`window.__V14_BASE__ = ${JSON.stringify(BASE)};`);
+  await dark.evaluateOnNewDocument(makeChromeStub);
+  dark.on('pageerror', (e) => errors.push(`[dark] pageerror: ${e.message}`));
+  dark.on('console', (m) => { if (m.type() === 'error') errors.push(`[dark] console: ${m.text()}`); });
+  await dark.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
+  await dark.waitForSelector('.cm-editor', { timeout: 8000 });
+  await fill(dark, DOC);
+  const d = await dark.evaluate(() => {
+    const probe = document.createElement('div');
+    probe.style.backgroundColor = 'var(--bg-inset)';
+    document.body.appendChild(probe);
+    const inset = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    const cm = document.querySelector('#editorIn .cm-editor');
+    const bar = document.querySelector('.toolbar');
+    return {
+      themeDark: document.body.classList.contains('theme-dark'),
+      inset,
+      cmBg: cm ? getComputedStyle(cm).backgroundColor : '(missing)',
+      cmColor: cm ? getComputedStyle(cm).color : '(missing)',
+      toolbarShadow: bar ? getComputedStyle(bar).boxShadow : '(missing)',
+      // 深色令牌挂在 body.theme-dark 上（不是 :root），必须读 body 的 computed 值
+      faint: getComputedStyle(document.body).getPropertyValue('--text-faint').trim().toLowerCase(),
+    };
+  });
+  check('N13/dark 深色令牌由同步段落地（body.theme-dark）', d.themeDark, d);
+  check('N13/dark CM6 底色与 --bg-inset 一致（不再被 oneDark 接管）',
+    d.inset === d.cmBg && d.cmBg !== 'rgba(0, 0, 0, 0)', d);
+  check('N13/dark toolbar 阴影不再硬编码浅色值',
+    !d.toolbarShadow.includes('26, 28, 33'), d);
+  check('N13/dark 小字令牌对比度已提升', d.faint === '#8b939c', d);
+  await dark.screenshot({ path: `${OUT}/v16-360-dark.png` });
+  await dark.close();
 }
 
 await browser.close();

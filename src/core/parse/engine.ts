@@ -184,7 +184,9 @@ export function parseValue(
     }
     try {
       const normalized = normalizeNumber(raw);
-      if (!strict && normalized !== raw) marks.push(mk('number_normalized', t, raw, normalized));
+      // v1.6 / N10：严格档也必须「修正可见」——原先只在 !strict 记 mark，
+      // 导致 Python 严格档把 .5 静默改成 0.5 却报告 status=ok / fixes=0。
+      if (normalized !== raw) marks.push(mk('number_normalized', t, raw, normalized));
       return normalized;
     } catch {
       return die('bad_value', t, '数字格式无效');

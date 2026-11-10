@@ -233,7 +233,8 @@ export class AppController {
   /** v1.5 / D7：resize 的 rAF 节流句柄 */
   private resizeRaf = 0;
   /** v1.5 / D26：输入片段（纯内存，绝不落盘，刷新即失；上限 8 条防挤爆） */
-  private snippets: string[] = [];
+  /** v1.6 / N16：片段带来源 tab —— 跨 tab 复用纯文本会让人误以为丢了结构 */
+  private snippets: Array<{ text: string; tab: TabId }> = [];
   /** v1.5 / D4：matchMedia change 监听器（销毁时摘除） */
   private themeQuery: MediaQueryList | null = null;
 
@@ -562,11 +563,11 @@ export class AppController {
         this.setStatus('输入为空，没有可存的片段');
         return;
       }
-      if (this.snippets[0] === text) {
+      if (this.snippets[0]?.text === text && this.snippets[0]?.tab === this.tab) {
         this.setStatus('最新片段就是它（不重复保存）');
         return;
       }
-      this.snippets.unshift(text);
+      this.snippets.unshift({ text, tab: this.tab });
       if (this.snippets.length > 8) this.snippets.length = 8;
       this.renderSnippets();
       this.setStatus('已存为片段（仅本次会话，刷新即失）');
@@ -991,11 +992,15 @@ export class AppController {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'snippetbar__chip';
-      chip.title = s.slice(0, 200);
-      chip.textContent = s.replace(/\s+/g, ' ').slice(0, 18) || '(空)';
+      chip.dataset.fromTab = s.tab;
+      // v1.6 / N16：来自别的 tab 的片段要标出来，避免把转义纯文本误灌进格式化通道
+      const from = TAB_TEXT[s.tab];
+      chip.title = `来自${from} · ${s.text.slice(0, 200)}`;
+      chip.textContent = s.text.replace(/\s+/g, ' ').slice(0, 18) || '(空)';
+      chip.setAttribute('aria-label', `片段 ${i + 1}，来自${from}`);
       chip.addEventListener('click', () => {
-        this.setInput(s);
-        this.setStatus(`已载入片段 ${i + 1}`);
+        this.setInput(s.text);
+        this.setStatus(s.tab === this.tab ? `已载入片段 ${i + 1}` : `已载入${from}的片段 ${i + 1}（注意来源通道不同）`);
       });
       bar.appendChild(chip);
     });
@@ -1028,14 +1033,24 @@ export class AppController {
     overlay.id = 'compareOverlay';
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-label', '输入与输出对比');
+    // v1.6 / N12：逐行同步生成两列 div，大文本会瞬间创建数十万节点。
+    // 完整 diff 算法留待后续；这里先给硬上限 + 明确截断提示，保证界面不卡死。
+    if (inText.length + outText.length > 200_000) {
+      this.setStatus('内容过大，暂不支持并排对比（请用放大页或拆分文本）');
+      return;
+    }
     const inLines = inText.split('\n');
     const outLines = outText.split('\n');
-    const rows = Math.max(inLines.length, outLines.length);
+    const MAX_ROWS = 400;
+    const total = Math.max(inLines.length, outLines.length);
+    const rows = Math.min(total, MAX_ROWS);
     const head = document.createElement('div');
     head.className = 'cmp__head';
     const title = document.createElement('span');
     title.className = 'cmp__title';
-    title.textContent = `对比：输入 ${inLines.length} 行 · 输出 ${outLines.length} 行（高亮 = 与对侧同位置不同）`;
+    title.textContent =
+      `对比：输入 ${inLines.length} 行 · 输出 ${outLines.length} 行（高亮 = 与对侧同位置不同）` +
+      (total > MAX_ROWS ? ` · 仅显示前 ${MAX_ROWS} 行` : '');
     head.appendChild(title);
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
@@ -1082,6 +1097,9 @@ export class AppController {
 
   /** 切换 tab（FR-L1 / FR-L4 / FR-L3） */
   switchTab(id: TabId): void {
+    // v1.6 / N16：对比浮层是上一个 tab 的输入/输出快照，切 tab 必须关掉，
+    // 否则用户看到的是「旧通道的两列内容」且标题还写着当前状态。
+    this.closeCompare();
     if (id === this.tab) {
       // v1.2：重复点同一 tab 也要收起动画，避免残留
       this.endBoot();
@@ -1527,6 +1545,9 @@ export class AppController {
 
     this.lastGoodOutput = res.output;
     this.out.setDoc(res.output);
+    // v1.6 / N16：转义输出是纯文本，不该沿用上一通道的 JSON/Python 语法高亮。
+    // EditorLang 的 'java' 是「无高亮」档（见 editor.ts / FR-A18）。
+    this.out.setLang('java');
     this.dom.staleBadge.hidden = true;
     this.dom.editorOut.classList.remove('is-stale');
     this.in.clearHighlight();

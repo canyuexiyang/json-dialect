@@ -53,7 +53,8 @@
   /* 墨色 */
   --text: #1a1c21;
   --text-dim: #6d6a63;
-  --text-faint: #97938b;
+  /* v1.6 / N13：9~12px 小字也要 ≥4.5:1，原 #97938b 太浅 */
+  --text-faint: #837f76;
 
   /* 通道信号 + 语义色 */
   --signal: #0e6f68;
@@ -83,35 +84,12 @@
   --u: 4px;
 }
 
-/* FR-F7：跟随系统深色 */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17191c;
-    --bg-panel: #1d2024;
-    --bg-inset: #121417;
-    --bg-recess: #0e1013;
-    --border: #2e3238;
-    --border-strong: #454b53;
-
-    --text: #e8eaed;
-    --text-dim: #9aa1a9;
-    --text-faint: #6b727a;
-
-    --signal: #35c9b8;
-    --signal-soft: #14302e;
-    --signal-ink: #0a1512;
-    --warn: #e0b341;
-    --warn-soft: #33290f;
-    --danger: #f0837a;
-    --danger-soft: #331714;
-    --ok: #63c98c;
-
-    --lift: 0 1px 0 rgba(0, 0, 0, 0.4);
-    --inset-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
-    --pop-shadow: 0 8px 22px -6px rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255, 255, 255, 0.04);
-  }
-}
-
+/* FR-F7：跟随系统深色
+   v1.6 / N13：深色令牌只保留 body.theme-dark 这一份正本。
+   原先 @media(prefers-color-scheme:dark) 与 body.theme-dark 双写 24 个值，
+   改一处就得同步改两处，漂移只是时间问题。主题判定统一由控制器 init 的
+   **同步段**完成（编辑器创建前加 class，任何 await 之前），并监听
+   matchMedia.change 运行时切换 —— 因此不需要 media 里再抄一份。 */
 body.theme-dark {
   --bg: #17191c;
   --bg-panel: #1d2024;
@@ -122,7 +100,7 @@ body.theme-dark {
 
   --text: #e8eaed;
   --text-dim: #9aa1a9;
-  --text-faint: #6b727a;
+  --text-faint: #8b939c;
 
   --signal: #35c9b8;
   --signal-soft: #14302e;
@@ -212,7 +190,11 @@ body {
   width: 100%;
   min-width: 0;
   height: 100vh;
-  overflow: hidden;
+  /* v1.6 / N14：三处 flex-wrap 在 320px 换行后总高度可能超过视口。
+     原 overflow:hidden 会把底部工具栏永久裁掉且无法滚动到 —— 改为
+     纵向可滚兜底（无溢出时不产生滚动条），横向仍锁死防侧边栏溢出。 */
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--bg);
   border-left: 3px solid var(--signal);
   transition: border-left-color 0.28s cubic-bezier(0.4, 0, 0.2, 1);
@@ -884,11 +866,20 @@ body {
 
 .editor .cm-editor {
   height: 100%;
+  /* v1.6 / N13：oneDark 会把编辑器底色接管成 #282c34，与 --bg-inset 断层。
+     这里用更高特异性的选择器把底色/正文色钉回设计令牌（无需 !important）。 */
+  background-color: var(--bg-inset);
+  color: var(--text);
+}
+
+body.theme-dark .editor .cm-content {
+  color: var(--text);
 }
 
 /* 输出过期：整体压暗 + 去色，像被断电的读数窗 */
 .editor--out.is-stale {
-  opacity: 0.4;
+  /* v1.6 / N13：原 0.4 几乎不可读，失败时仍需看清上次结果 */
+  opacity: 0.58;
   filter: grayscale(0.75);
   transition: opacity 0.18s, filter 0.18s;
 }
@@ -1044,6 +1035,52 @@ body {
   font-size: 11.5px;
 }
 
+/* ── v1.6 / N08：FR-C11 真正的降级 UI（搜索 + 分页 + 口径说明） ── */
+.typepanel__note {
+  font-size: 9.5px;
+  color: var(--text-faint);
+  margin: -2px 0 6px;
+}
+
+.typepanel__tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.typepanel__search {
+  flex: 1 1 120px;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-inset);
+  border: var(--rule) solid var(--border);
+  border-radius: var(--radius);
+}
+
+.typepanel__search:focus-visible {
+  outline: 1px solid var(--signal);
+  outline-offset: 1px;
+}
+
+.typepanel__tools .btn {
+  height: 22px;
+  padding: 0 7px;
+  font-size: 10.5px;
+}
+
+.typepanel__page {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 /* ── ⑤ 底部操作栏 ─────────────────────────────────────────
    状态居左（配 LED），动作钉右，主 action 与其他按钮之间用间距分组。
    v1.3：320px 下最坏 ≈520px，必须允许换行 —— 否则「复制」「下载」被裁掉。 */
@@ -1057,7 +1094,8 @@ body {
   padding: 7px 10px;
   border-top: var(--rule) solid var(--border);
   background: var(--bg-panel);
-  box-shadow: 0 -1px 0 rgba(26, 28, 33, 0.04);
+  /* v1.6 / N13：阴影硬编码为浅色值，深色下会变成一道突兀的白线 */
+  box-shadow: 0 -1px 0 var(--border);
 }
 
 .toolbar__actions {
@@ -1257,6 +1295,56 @@ body.theme-dark .editor .cm-activeLine {
 body.theme-dark .editor .cm-selectionBackground,
 body.theme-dark .editor .cm-content .cm-selectionBackground {
   background: color-mix(in srgb, var(--signal) 32%, transparent);
+}
+
+/* ── v1.6 / E4：恢复编辑器内查找后，搜索面板也要令牌化 ────────────
+   v1.5 白名单移除 searchKeymap 时没有面板可造型；恢复后若不覆盖，
+   CM6 默认的浅灰面板会在深色模式里像一块补丁。 */
+.editor .cm-panels {
+  background: var(--bg-panel);
+  color: var(--text);
+  border-bottom: var(--rule) solid var(--border);
+  font-family: var(--font);
+}
+
+.editor .cm-panel.cm-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 5px 8px;
+}
+
+.editor .cm-textfield {
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-inset);
+  border: var(--rule) solid var(--border);
+  border-radius: var(--radius);
+}
+
+.editor .cm-button {
+  height: 22px;
+  padding: 0 7px;
+  font-family: var(--font);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: var(--bg-recess);
+  border: var(--rule) solid var(--border);
+  border-radius: var(--radius);
+}
+
+.editor .cm-searchMatch {
+  background: color-mix(in srgb, var(--warn) 38%, transparent);
+  outline: 1px solid var(--warn);
+}
+
+.editor .cm-searchMatch-selected {
+  background: color-mix(in srgb, var(--signal) 45%, transparent);
 }
 
 /* ── 入场动画：整台仪器"通电" ──────────────────────────────
@@ -1530,14 +1618,18 @@ body.theme-dark .editor .cm-content .cm-selectionBackground {
   position: absolute;
   left: 0;
   right: 0;
-  top: 33px; /* 避开 pane__head（min-height 24 + 边框 + padding） */
+  /* v1.6 / N14：原 top:33px 是按弹窗时代的 pane__head 高度写死的。
+     改为整块覆盖 + 顶部对齐：示例按钮固定在读数窗上部，不再随 head 高度错位，
+     也**不会压在编辑器中心**（真机脚本靠点击 .cm-content 中心灌入文本，
+     居中会被示例按钮拦截）。容器 pointer-events:none，只有按钮接事件。 */
+  top: 0;
   bottom: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 10px;
-  padding: 12px;
+  padding: 46px 12px 12px;
   pointer-events: none; /* 说明文字不拦截编辑器点击 */
   z-index: 5;
 }

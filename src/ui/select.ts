@@ -24,6 +24,25 @@ const CARET = '<svg class="sel__caret" viewBox="0 0 12 12" aria-hidden="true"><p
 /** 页面上已打开的下拉（同时只允许一个） */
 let openInstance: SelectHandle | null = null;
 let nextSelectId = 0;
+/** v1.6 / N17：bindHiddenClose 建的观察器需要能被重建方显式断开 */
+const observers = new WeakMap<HTMLSelectElement, MutationObserver>();
+
+/**
+ * v1.6 / N17：释放一个下拉的全局资源。
+ * 类型面板每次转换都会 `innerHTML = ''` 重建，旧 MutationObserver 会一直
+ * 持有被移除的 select；长会话下只增不减。重建前必须调用本函数。
+ */
+export function releaseSelect(native: HTMLSelectElement): void {
+  const obs = observers.get(native);
+  if (obs) {
+    obs.disconnect();
+    observers.delete(native);
+  }
+  if (openInstance?.native === native) {
+    openInstance.close();
+    openInstance = null;
+  }
+}
 
 /** v1.5：关闭当前打开的下拉（全局 Esc 兜底用）。返回是否确实关了一个。 */
 export function closeOpenSelect(): boolean {
@@ -138,12 +157,16 @@ export function decorateSelect(
       const r = trigger.getBoundingClientRect();
       if (r.width > 0 || r.height > 0) {
         menu.style.position = 'fixed';
-        menu.style.left = `${Math.max(0, Math.round(r.left))}px`;
         menu.style.top = `${Math.round(r.bottom + 4)}px`;
         menu.style.minWidth = `${Math.round(r.width)}px`;
         // 向下放不下（类型面板靠近视口底部）就向上翻
         const vh = window.innerHeight || 0;
+        const vw = window.innerWidth || 0;
         const mh = menu.offsetHeight || 0;
+        // v1.6 / N14：320px 侧边栏里靠右的触发器会把菜单推出视口右边界
+        const mw = menu.offsetWidth || Math.round(r.width);
+        const maxLeft = Math.max(0, vw - mw - 4);
+        menu.style.left = `${Math.min(Math.max(0, Math.round(r.left)), maxLeft)}px`;
         if (vh > 0 && mh > 0 && r.bottom + 4 + mh > vh && r.top - 4 - mh >= 0) {
           menu.style.top = `${Math.round(r.top - mh - 4)}px`;
         }
@@ -269,6 +292,7 @@ export function bindHiddenClose(sel: HTMLSelectElement, handle: SelectHandle): v
   };
   const obs = new MutationObserver(sync);
   obs.observe(sel, { attributes: true, attributeFilter: ['hidden'] });
+  observers.set(sel, obs);
   sync();
 }
 

@@ -11,11 +11,12 @@ describe('审查回归：语法与数据完整性', () => {
   it.each(["{'a':1}", '{"a":(1,2)}', '{"a":1} #comment', '{1:2}', '{"a":"\\x41"}', '{"a":"x\ny"}'])('严格 JSON 拒绝 %s', (s) => {
     expect(json(s).status).toBe('error');
   });
-  it('严格 Python 接受本语言的尾逗号和注释', () => {
+  it('严格 Python 接受本语言的尾逗号和注释，且注释剥离必须可见（v1.6 / N10）', () => {
     const r = convert("{'a':1, 'b':(2,),} #comment", { force:'python', strictOnly:true, target:'json' });
     expect(r.status).not.toBe('error');
     expect(JSON.parse(r.output)).toEqual({a:1,b:[2]});
-    expect(r.fixes).toEqual([]);
+    // v1.6 前严格档把注释静默丢掉却报告 fixes=[]，与「任何偏差都可见」相矛盾
+    expect(r.fixes.map((f) => f.action)).toContain('剥离行注释');
   });
   it.each(['true', 'FALSE', 'null'])('严格 Python 拒绝非本语言字面量 %s', (v) => {
     expect(convert(`{'a':${v}}`, {force:'python',strictOnly:true}).status).toBe('error');
