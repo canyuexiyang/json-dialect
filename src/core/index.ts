@@ -75,9 +75,6 @@ export interface ConvertOptions {
   compact?: boolean;
   timeoutMs?: number;
   overrides?: TypeOverride;
-  /** 已存在的 token 流（放大页复用，避免重复扫描） */
-  tokens?: Token[];
-  rawText?: string;
   /**
    * FR-A17：目标格式。默认 'auto'（沿用 v1.0 的「由来源推导」规则，行为不变）。
    * 该选择**不得**影响来源格式判定（AC-66）。
@@ -122,11 +119,19 @@ function clipForMark(s: string): string {
   return one.length > 24 ? one.slice(0, 24) + '…' : one;
 }
 
-/** FR-F4：字符数按 Unicode 码点；行数 = 换行符数 + 1 */
+/**
+ * FR-F4：字符数按 Unicode 码点；行数 = 换行符数 + 1
+ * v1.5.1 / N09：原先 `[...text].length` 会为 20MB 文本额外物化一个千万级数组，
+ * 且 lines 已经遍历过一遍。合并为单次迭代，计数零分配。
+ */
 export function computeStats(text: string): { lines: number; chars: number } {
   let lines = 1;
-  for (const ch of text) if (ch === '\n') lines++;
-  return { lines, chars: [...text].length };
+  let chars = 0;
+  for (const ch of text) {
+    chars++;
+    if (ch === '\n') lines++;
+  }
+  return { lines, chars };
 }
 
 /**
@@ -209,8 +214,9 @@ function convertWithDeadline(text: string, opts: ConvertOptions, deadline: Deadl
     };
   }
 
-  const lexed = opts.tokens ? null : lex(working, { deadline });
-  const tokens = opts.tokens ?? lexed!.tokens;
+  // v1.5.1 / N21：原先允许外部传 tokens / rawText 复用，但全仓零调用点，
+  // 反而留下 `lexed` 可能为 null 的非空断言。统一走一次 lexer。
+  const tokens = lex(working, { deadline }).tokens;
   const sig = tokens;
 
   // v1.5 / D22：只有注释与空白时，解析器会在 need() 里报「内容不完整」——
@@ -342,7 +348,7 @@ function buildResult(
   const outLang = outputLangFor(fmt, resolved);
   let output: string;
   try {
-    output = serialize(applyOverrides(ir, values, opts.overrides, deadline), outLang, opts, deadline);
+    output = serialize(applyOverrides(ir, values, opts.overrides, deadline, outLang), outLang, opts, deadline);
   } catch (e) {
     if (!(e instanceof ParseError)) throw e;
     return {

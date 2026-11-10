@@ -38,7 +38,7 @@ import {
 } from '@codemirror/state';
 import { indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { json } from '@codemirror/lang-json';
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -145,7 +145,9 @@ export function createEditor(
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightSpecialChars(),
-    history(),
+    // v1.5.1 / N19：只读输出区不需要撤销栈。1M 文本每次 setDoc 都会往 history
+    // 里塞一个巨型事务，纯浪费内存；输入区仍保留完整 undo/redo。
+    ...(readOnly ? [] : [history()]),
     drawSelection(),
     dropCursor(),
     EditorState.allowMultipleSelections.of(true),
@@ -154,7 +156,9 @@ export function createEditor(
     bracketMatching(),
     closeBrackets(),
     highlightActiveLine(),
-    keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
+    // v1.5.1 / N04：刻意不装 indentWithTab —— 它会吃掉 Tab / Shift+Tab，
+    // 键盘用户永远走不出编辑器。缩进仍可用 defaultKeymap 的 Mod-[ / Mod-]。
+    keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...(readOnly ? [] : historyKeymap)]),
     errorLineField,
     errorLineDeco,
     errorGutter,

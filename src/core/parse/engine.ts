@@ -144,7 +144,13 @@ export function parseValue(
             : node.k === 'null'
               ? 'null'
               : 'string',
-      raw: node.k === 'num' ? node.raw : node.k === 'str' ? node.value : '',
+      // v1.5.1 / N06：bool / null 也必须给出可用文本。原先只有 num/str 有 raw，
+      // 类型覆盖把 true 强制转字符串会得到空串，bool→boolean 反而报「不能转换为布尔值」。
+      raw:
+        node.k === 'num' ? node.raw
+          : node.k === 'str' ? node.value
+            : node.k === 'bool' ? (node.value ? 'true' : 'false')
+              : 'null',
     });
   }
 
@@ -238,9 +244,10 @@ export function parseValue(
             marks.push(mk('nonstring_key', keyTok, keyTok.raw, `"${keyTok.raw}"`));
           } else {
             const w = keyTok.raw;
-            // True/False/None/NaN 这类字面量作键：严格模式判非法；
-            // 宽松模式按 FR-A16 转为字符串键并记修正（JSON 对象键必须是字符串，
-            // 报错不如转字符串 + 显式提示 —— 与 FR-A15/A16 同一取舍原则）。
+            // True/False/None 作键：按 Python 语义保留为 bool/null 节点（严格档也放行，
+            // 不记修正 —— 它是合法 Python 字面量，不是「被修好的错误」）；
+            // 宽松档下记一条 nonstring_key，提示目标 JSON 会把键转成字符串。
+            // 其余裸键在严格档直接报错，宽松档按 FR-A16 转字符串键并记修正。
             if (isPy && (w === 'True' || w === 'False' || w === 'None')) {
               c.next();
               key = w === 'None' ? { k: 'null', span: spanFrom(keyTok, keyTok) } : { k: 'bool', value: w === 'True', span: spanFrom(keyTok, keyTok) };
@@ -249,7 +256,9 @@ export function parseValue(
               if (strict) die('unexpected_token', keyTok, '键名缺少引号');
               c.next();
               key = { k: 'str', value: w, span: spanFrom(keyTok, keyTok) };
-              marks.push(mk('key_quoted', keyTok, w, `'${w}'`));
+              // v1.5.1 / N21：修正条的 after 示意用双引号（序列化器默认输出标准 JSON 键），
+              // 原先写单引号与实际输出对不上。
+              marks.push(mk('key_quoted', keyTok, w, `"${w}"`));
             }
           }
         } else if (keyTok.type === 'punct' && keyTok.raw === '(') {

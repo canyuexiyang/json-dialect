@@ -14,6 +14,10 @@
  *  ② D7：resize 后路径条中段省略是否仍无溢出
  *  ③ D10：类型面板里的自绘下拉浮层是否被滚动容器裁切
  *  另有 K1：Ctrl+F 不再被 CM6 拦截（白名单扩展后应无 .cm-panels）
+ *
+ * v1.5.1：新增真实键盘回归（jsdom 测不出） —— N04 Tab 焦点链、N02 macOS
+ * Option 特殊字符按 e.code 切 tab、N05 非空输入下 Esc 二次确认才关面板。
+ * v1.6：新增深色 computed style 与窄栏底部工具栏可见性断言。
  */
 import puppeteer from '/Users/guhui/.workbuddy/binaries/node/workspace/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js';
 import fs from 'node:fs';
@@ -40,7 +44,9 @@ const makeChromeStub = () => {
       setPanelBehavior: async () => {},
       getPanelBehavior: async () => ({ openPanelOnActionClick: true }),
       open: async () => {},
-      close: async () => {},
+      close: async () => {
+        window.__V14_PANEL_CLOSE__ = (window.__V14_PANEL_CLOSE__ || 0) + 1;
+      },
     },
     storage: {
       local: {
@@ -385,6 +391,81 @@ for (const width of WIDTHS) {
     });
     check('D12/360px 点击示例即灌入输入区', filled);
     await page.screenshot({ path: `${OUT}/v15-360-empty-examples.png` });
+
+    // ── v1.5.1 / N04：Tab 不再被 CM6 的 indentWithTab 截留 ──
+    await page.evaluate(() => document.querySelector('#editorIn .cm-content')?.focus());
+    await page.keyboard.press('Tab');
+    const tabFocus = await page.evaluate(() => ({
+      stillInInput: !!document.activeElement?.closest('#editorIn'),
+      tag: document.activeElement?.tagName ?? '',
+      id: document.activeElement?.id ?? '',
+    }));
+    check('N04/360px Tab 能离开输入区编辑器', !tabFocus.stillInInput, tabFocus);
+    let reached = false;
+    for (let i = 0; i < 16 && !reached; i++) {
+      reached = await page.evaluate(() => document.activeElement?.id === 'btnConvert');
+      if (!reached) await page.keyboard.press('Tab');
+    }
+    check('N04/360px 纯键盘焦点链能到达「转换」按钮', reached, { reached });
+
+    // ── v1.5.1 / N02：macOS Option 的 e.key 是 ¡/™/£，必须按 e.code 判定 ──
+    const macKeys = await page.evaluate(() => {
+      const fire = (key, code) => document.dispatchEvent(new KeyboardEvent('keydown', {
+        key, code, altKey: true, bubbles: true, cancelable: true,
+      }));
+      const sel = (tab) => document.querySelector(`[data-tab="${tab}"]`)?.getAttribute('aria-selected');
+      fire('¡', 'Digit2');
+      const escapeOn = sel('escape');
+      fire('£', 'Digit3');
+      const convertOn = sel('convert');
+      fire('¡', 'Digit1');
+      const formatOn = sel('format');
+      return { escapeOn, convertOn, formatOn };
+    });
+    check('N02/360px macOS Option 特殊字符仍可切 tab（e.code）',
+      macKeys.escapeOn === 'true' && macKeys.convertOn === 'true' && macKeys.formatOn === 'true', macKeys);
+
+    // ── v1.5.1 / N05：非空输入时首次 Esc 只警告，3s 内第二次才关面板 ──
+    // 先按一次清掉可能残留的浮层/下拉，再等过 3s 确认窗口，避免 armed 状态串扰。
+    await page.keyboard.press('Escape');
+    await sleep(3100);
+    const escState = await page.evaluate(async () => {
+      window.__V14_PANEL_CLOSE__ = 0;
+      document.getElementById('btnCopy')?.focus();
+      const fire = () => document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape', code: 'Escape', bubbles: true, cancelable: true,
+      }));
+      fire();
+      const first = {
+        closes: window.__V14_PANEL_CLOSE__ || 0,
+        msg: document.getElementById('statusMsg')?.textContent?.trim() ?? '',
+      };
+      fire();
+      // closeSidePanel() 内部要 await windows.getCurrent / withTimeout，计数落在微任务之后
+      await new Promise((r) => setTimeout(r, 80));
+      const second = window.__V14_PANEL_CLOSE__ || 0;
+      return { first, second };
+    });
+    check('N05/360px 首次 Esc 不关面板且给出明确警告',
+      escState.first.closes === 0 && escState.first.msg.includes('再按一次 Esc'), escState.first);
+    check('N05/360px 3s 内第二次 Esc 才真正关闭', escState.second === 1, escState);
+
+    // ── v1.6 / N14：窄栏下底部工具栏不得被永久裁掉 ──
+    const barFit = await page.evaluate((vw) => {
+      const bar = document.querySelector('.toolbar');
+      if (!bar) return { present: false };
+      const r = bar.getBoundingClientRect();
+      return {
+        present: true,
+        top: Math.round(r.top),
+        bottom: Math.round(r.bottom),
+        vh: innerHeight,
+        hScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        vw,
+      };
+    }, width);
+    check(`N14/${width}px 底部工具栏在视口内且无横向滚动`,
+      barFit.present && barFit.bottom <= barFit.vh + 1 && barFit.top >= 0 && !barFit.hScroll, barFit);
   }
 
   check(`AC-37/${width}px 零外部请求`, external.length === 0, external);

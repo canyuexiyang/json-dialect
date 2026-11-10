@@ -186,6 +186,8 @@ export class AppController {
   private enlarging = false;
   private suppressInput = false;
   private prefsRevision = 0;
+  /** v1.5.1 / N05：非空输入时 Esc 的二次确认时间戳（0 = 未处于待确认态） */
+  private escArmedAt = 0;
   private splitRatio = 0.5;
   private workspaces: Partial<Record<TabId, { input: string; locked: SourceFormat | null; overrides: Array<[string, OverrideType]>; strippedPrefix: string; lastGoodOutput: string; lastGoodLang: OutputLang }>> = {};
   private lastGoodOutput = '';
@@ -276,7 +278,52 @@ export class AppController {
     }
 
     // ── ① 同步段：先把交互就绪，任何 await 都不得出现在这之前 ──────────────
-    // 先用继承值/默认值，prefs 到位后再补（见 ②）
+    this.applyInherited(inherited);
+
+    this.in = createEditor(this.dom.editorIn, {
+      doc: initialInput,
+      lang: 'python',
+      dark: this.dark,
+      onChange: () => { if (!this.suppressInput) this.schedule(); },
+      onCursor: (offset) => this.onCursor('in', offset),
+    });
+    this.out = createEditor(this.dom.editorOut, {
+      doc: '',
+      lang: 'json',
+      readOnly: true, // FR-F9
+      dark: this.dark,
+      onCursor: (offset) => this.onCursor('out', offset),
+    });
+
+    // v1.2：把原生 select 升级为可造型下拉。
+    // 仍在同步段内 —— 它只操作 DOM，无 await；且失败必须静默降级，
+    // 绝不因此中断初始化（界面可用性 > 视觉一致性）。
+    this.decorateSelects();
+
+    this.bindEvents();
+    this.bindGlobalKeys();
+    this.applySplit(this.splitRatio);
+    this.renderTabs();
+    this.clearPath(); // v1.4：格式化 tab 首屏先给占位，避免空白条
+    // v1.5.1 / N01：首屏继承来的大文本也必须过闸门，统一走 setInput
+    if (initialInput) this.setInput(initialInput);
+    else this.renderEmpty();
+
+    // ── ② 异步段：偏好迟到不影响可用性 ──────────────────────────────────
+    // 无继承值时才读 prefs；读取带 1.5s 超时，超时即放弃，绝不阻塞交互。
+    if (inherited?.compact === undefined) {
+      void this.applyPrefsWhenReady();
+    }
+  }
+
+  /**
+   * 应用跨页继承态（AC-33 / O-9）。
+   *
+   * v1.5.1 / N11：从 init() 的同步段抽出，使「放大页交接迟到」也能复用同一套逻辑。
+   * 这里只写字段与 DOM，绝不 await —— 保证编辑器创建永远排在第一个 await 之前。
+   */
+  private applyInherited(inherited?: InheritedState): void {
+    // 先用继承值/默认值，prefs 到位后再补（见 init ②）
     if (inherited?.compact !== undefined) this.compact = inherited.compact;
 
     // O-9：tab / target / strict / 转义风格一并继承，否则放大后回到默认 tab
@@ -314,40 +361,22 @@ export class AppController {
         strippedPrefix: workspace.strippedPrefix ?? '', lastGoodOutput: '', lastGoodLang: 'json',
       };
     }
+  }
 
-    this.in = createEditor(this.dom.editorIn, {
-      doc: initialInput,
-      lang: 'python',
-      dark: this.dark,
-      onChange: () => { if (!this.suppressInput) this.schedule(); },
-      onCursor: (offset) => this.onCursor('in', offset),
-    });
-    this.out = createEditor(this.dom.editorOut, {
-      doc: '',
-      lang: 'json',
-      readOnly: true, // FR-F9
-      dark: this.dark,
-      onCursor: (offset) => this.onCursor('out', offset),
-    });
-
-    // v1.2：把原生 select 升级为可造型下拉。
-    // 仍在同步段内 —— 它只操作 DOM，无 await；且失败必须静默降级，
-    // 绝不因此中断初始化（界面可用性 > 视觉一致性）。
-    this.decorateSelects();
-
-    this.bindEvents();
-    this.bindGlobalKeys();
-    this.applySplit(this.splitRatio);
+  /**
+   * v1.5.1 / N11：放大页入口的跨页交接迟到时补齐。
+   *
+   * app.ts 现在先同步建 DOM + 编辑器，再异步 consumeSession()；
+   * 交接态到位后走这里重放，界面在此期间始终可用。
+   * 递增 prefsRevision 是为了让「迟到的历史偏好」不覆盖刚继承的会话态
+   *（applyPrefsWhenReady 的守卫语义：显式状态变更优先）。
+   */
+  inheritFromSession(input: string, inherited: InheritedState): void {
+    this.applyInherited(inherited);
+    this.prefsRevision++;
     this.renderTabs();
-    this.clearPath(); // v1.4：格式化 tab 首屏先给占位，避免空白条
-    if (initialInput) this.run(initialInput);
-    else this.renderEmpty();
-
-    // ── ② 异步段：偏好迟到不影响可用性 ──────────────────────────────────
-    // 无继承值时才读 prefs；读取带 1.5s 超时，超时即放弃，绝不阻塞交互。
-    if (inherited?.compact === undefined) {
-      void this.applyPrefsWhenReady();
-    }
+    this.syncTabControls();
+    this.setInput(input);
   }
 
   /**
@@ -853,29 +882,50 @@ export class AppController {
   /**
    * 全局键位（均在编辑器**外**仍可用）：
    *  Alt+1/2/3 直达 tab；Alt+T 打开标签页（panel 形态）；
-   *  Mod+Shift+C 复制输出；Mod+Shift+S 下载；Mod+Shift+A 全选输出并聚焦
+   *  Alt+C 复制输出、Alt+S 下载、Alt+A 全选输出并聚焦
    *  （K2：CM6 的 Ctrl+A 只全选当前编辑器，两个编辑器同页时用它直达输出）。
+   *  v1.5.1：主键位从 Mod+Shift+C/S/A 改为 Alt+…，因为前三者是 Chrome 保留键；
+   *  旧键位仍作兼容保留。所有 Alt 组合按 e.code 判定（macOS Option 会改写 e.key）。
    *  Esc：先关对比浮层 / 自绘菜单；焦点不在编辑器内且为侧边栏形态时关闭侧边栏
    *  （K3：编辑器内的 Esc 保留 CM6 的「简化选区」语义，绝不抢）。
+   *  v1.5.1：有输入时首次 Esc 只警告，3s 内再按一次才关，避免误触丢内容。
    */
   private bindGlobalKeys(): void {
     document.addEventListener('keydown', (e) => {
       const mod = e.metaKey || e.ctrlKey;
-      if (e.altKey && !mod && !e.shiftKey && ['1', '2', '3'].includes(e.key)) {
+      // v1.5.1 / N02：macOS 下 Option+1/2/3/T 的 e.key 是 ¡/™/£/† 等特殊字符，
+      // 必须优先按物理键位 e.code 判定；e.key 仅作无 code（jsdom / 老浏览器）时兜底。
+      const codeDigit = /^Digit[0-9]$/.test(e.code) ? e.code.slice(5) : '';
+      const digit = codeDigit || (/^[1-3]$/.test(e.key) ? e.key : '');
+      if (e.altKey && !mod && !e.shiftKey && ['1', '2', '3'].includes(digit)) {
         e.preventDefault();
-        const id = TAB_ORDER[Number(e.key) - 1];
+        const id = TAB_ORDER[Number(digit) - 1];
         this.switchTab(id);
         const btn = id === 'format' ? this.dom.tabFormat : id === 'escape' ? this.dom.tabEscape : this.dom.tabConvert;
         btn?.focus();
         return;
       }
-      if (e.altKey && !mod && (e.key === 't' || e.key === 'T')) {
+      const isAltT = e.code === 'KeyT' || e.key === 't' || e.key === 'T' || e.key === '†';
+      if (e.altKey && !mod && isAltT) {
         if (this.opts.surface === 'panel') {
           e.preventDefault();
           void this.handleEnlarge();
         }
         return;
       }
+      // v1.5.1 / N03：Mod+Shift+C / A 在 Chrome 里分别是 DevTools Inspect 与
+      // Tab Search，网页根本收不到 keydown；S 在部分宿主同样被占用。
+      // 主键位改为 Alt+C/S/A（仍用 e.code 判定以兼容 macOS 的 Option 组合）。
+      const altCode = /^Key[CSA]$/.test(e.code) ? e.code.slice(3).toLowerCase() : '';
+      const altLetter = altCode || (/^[csa]$/i.test(e.key) ? e.key.toLowerCase() : '');
+      if (e.altKey && !mod && !e.shiftKey && ['c', 's', 'a'].includes(altLetter)) {
+        e.preventDefault();
+        if (altLetter === 'c') void this.handleCopy();
+        else if (altLetter === 's') this.dom.btnDownload.click();
+        else this.selectAllOutput();
+        return;
+      }
+      // 旧键位保留作兼容：Chrome 通常收不到，其他宿主可能可达。
       if (mod && e.shiftKey && !e.altKey) {
         const k = e.key.toLowerCase();
         if (k === 'c') {
@@ -903,6 +953,16 @@ export class AppController {
         const focusInCm = (document.activeElement as HTMLElement | null)?.closest?.('.cm-editor');
         if (!focusInCm && this.opts.surface === 'panel') {
           e.preventDefault();
+          // v1.5.1 / N05：非空输入时误按 Esc 会直接卸载 panel.html，输入零落盘、
+          // 重开无法恢复。首次只给明确警告，3s 内再按一次才真正关闭；
+          // 空输入仍保持原来的一键关闭。
+          const now = Date.now();
+          if (this.in.getDoc().trim() && now - this.escArmedAt > 3000) {
+            this.escArmedAt = now;
+            this.setStatus('再按一次 Esc 关闭侧边栏（当前输入将丢失）');
+            return;
+          }
+          this.escArmedAt = 0;
           void closeSidePanel();
         }
       }
@@ -1092,6 +1152,10 @@ export class AppController {
     const isFormat = this.tab === 'format';
     this.dom.fmtSelect.hidden = isEscape;
     this.dom.resetAuto.hidden = isEscape || this.locked === null;
+    // v1.5.1 / N07：转义 tab 是纯文本通道，来源标签与「手动锁定」徽标都得收起，
+    // 否则会残留上一个 tab 的格式语义（或「待输入」这种无意义文案）。
+    this.dom.fmtLabel.hidden = isEscape;
+    this.dom.lockBadge.hidden = isEscape || this.locked === null;
     if (this.dom.targetSelect) this.dom.targetSelect.hidden = isEscape || isFormat;
     if (this.dom.targetSelect && !isEscape && !isFormat) {
       this.dom.targetSelect.value = this.target;
@@ -1104,6 +1168,14 @@ export class AppController {
     if (this.dom.escapeDirSeg) this.dom.escapeDirSeg.hidden = !isEscape;
     // v1.5 / D3：包裹外层引号只在转义 tab 显示
     if (this.dom.wrapQuotesWrap) this.dom.wrapQuotesWrap.hidden = !isEscape;
+    // v1.5.1 / N15：该开关只在 encode 分支生效（escapeText.ts:278），
+    // decode 时禁用并说明，别让用户勾了却看不到任何效果。
+    if (this.dom.wrapQuotes) {
+      const usable = isEscape && this.escapeDir === 'encode';
+      this.dom.wrapQuotes.disabled = !usable;
+      this.dom.wrapQuotes.title = usable ? '' : '仅「增加转义」方向可包裹外层引号';
+      this.dom.wrapQuotesWrap?.classList.toggle('is-disabled', !usable);
+    }
     for (const [btn, dir] of [
       [this.dom.escapeDirDecode, 'decode'],
       [this.dom.escapeDirEncode, 'encode'],
@@ -1242,20 +1314,34 @@ export class AppController {
       this.in.setHighlight(chars <= T1);
       this.out.setHighlight(chars <= T1);
     });
+    // v1.5.1 / N01：闸门抽成单一入口，schedule 与 setInput 共用
+    if (this.guardOversize(text, chars)) return;
+    this.setStatus('待处理');
+    this.timer = window.setTimeout(() => this.run(this.in.getDoc()), chars > T1 ? 300 : 200);
+  }
+
+  /**
+   * v1.5.1 / N01：超大文本闸门的**唯一实现**。
+   *
+   * 原缺陷：只有 schedule()（编辑器 onChange）会拦，setInput()（空态示例 / 片段 /
+   * 拖文件 / 放大页交接）随后直接调 run()，既撤掉提示条又同步跑全量转换。
+   * 现在所有「写入输入」的路径都必须先过这里；显式入口（「转换」按钮、
+   * 「仍要转换」）仍然直接调 run()，它们本就是用户主动放行的大文本转换。
+   *
+   * @returns true 表示已拦截，调用方必须立即 return
+   */
+  private guardOversize(text: string, chars = computeStats(text).chars): boolean {
     if (chars > T2) {
-      // v1.5 / D19：阈值放宽到 1M 后仍超限的，给「仍要转换」一键入口，
-      // 而不是让用户自己去猜按钮还能不能用。
       this.oversize = true;
       this.syncTabControls();
       this.renderOversizeHint();
       this.setStatus('文本过大，已关闭实时转换');
-      return;
+      return true;
     }
     this.oversize = false;
     this.clearOversizeHint();
     this.syncTabControls();
-    this.setStatus('待处理');
-    this.timer = window.setTimeout(() => this.run(this.in.getDoc()), chars > T1 ? 300 : 200);
+    return false;
   }
 
   /** v1.5 / D19：「文本过大」提示条 + 仍要转换的一键入口 */
@@ -1304,7 +1390,7 @@ export class AppController {
     if (this.dom.emptyHints) this.dom.emptyHints.hidden = true;
     this.clearOversizeHint();
 
-    const chars = [...text].length;
+    const chars = computeStats(text).chars; // v1.5.1 / N09：不再物化 [...text] 数组
 
     // 性能降级（FR-G3）：关闭高亮，不重建编辑器（D-4）
     const highlightOn = chars <= T1;
@@ -1888,7 +1974,11 @@ export class AppController {
   /** 供放大页与外部驱动（自动化测试）写入输入内容 */
   setInput(text: string): void {
     if (!text.trim()) { this.panel.clear(); this.setLocked(null); }
-    this.in.setDoc(text);
+    this.in.setDoc(text); // onChange → schedule()（其中已跑一次闸门）
+    // v1.5.1 / N01：四条非 onChange 路径（空态示例 / 片段 / 拖文件 / 放大页交接）
+    // 都汇聚到这里，必须显式再过一次闸门。不能只依赖 schedule 的副作用 ——
+    // setDoc 遇到相同文本会早退，根本不触发 onChange。
+    if (this.guardOversize(text)) return;
     this.run(text);
   }
 

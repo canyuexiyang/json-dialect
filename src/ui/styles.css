@@ -1508,6 +1508,18 @@ body.theme-dark .editor .cm-content .cm-selectionBackground {
   color: var(--text);
 }
 
+/* v1.5.1 / N15：decode 方向该开关不生效，明确置灰而不是让用户白勾 */
+.wrapq.is-disabled,
+.wrapq.is-disabled:hover {
+  opacity: 0.45;
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.wrapq.is-disabled input[type='checkbox'] {
+  cursor: not-allowed;
+}
+
 /* ── v1.5：空态一键示例（D12） ─────────────────────────────
    覆盖在输入区台面上的引导层：底层说明不拦事件，按钮可点。 */
 .pane--in {
