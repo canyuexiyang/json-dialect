@@ -76,7 +76,10 @@ const fail = [];
 
 function check(name, cond, detail) {
   report.push({ name, ok: !!cond, detail });
-  if (!cond) fail.push(`${name}${detail === undefined ? '' : ' → ' + JSON.stringify(detail)}`);
+  if (!cond) {
+    fail.push(`${name}${detail === undefined ? '' : ' → ' + JSON.stringify(detail)}`);
+    console.log(`❌ ${name}  ${JSON.stringify(detail)}`);
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -206,6 +209,7 @@ for (const width of WIDTHS) {
 
   // ── v1.6 / E4：Ctrl+F 恢复编辑器内查找（浏览器原生查找对 CM6 虚拟滚动无效） ──
   // macOS 的 Mod 是 Cmd，Cmd+F 被浏览器查找占用；编辑器显式补了 Control-f 键位。
+  // 注意：必须放在 FR-T 块之前 —— tab 往返会改变编辑器语言档，影响面板行为（探针实测）。
   await page.focus('#editorIn .cm-content');
   await page.keyboard.down('Control');
   await page.keyboard.press('KeyF');
@@ -513,6 +517,87 @@ for (const width of WIDTHS) {
     await page.screenshot({ path: `${OUT}/v16-360-typepanel-degraded.png` });
   }
 
+  // ── v1.7 / FR-T：折叠 gutter 落地 + 点击折叠/恢复 + 占位符 [+] 文本 ──
+  // 折叠要求节点跨行（单行 JSON 的折叠区间 value.to <= line.to 不成立）。
+  // 放在所有路径条 / 搜索面板断言之后：tab 往返会切换输入区语言档，
+  // 其后的 Ctrl+F / 路径点选行为与首进入时不同（既有行为，与本批次无关），
+  // 故本块自包含收尾（后面只剩 AC-37 零网络断言，不依赖编辑器状态）。
+  const FOLD_DOC = '{\n  "data": {\n    "list": [\n      {"userName": "Alice"},\n      {"userName": "Bob"}\n    ]\n  },\n  "ok": true\n}';
+  await fill(page, FOLD_DOC);
+  await sleep(400);
+
+  const foldCheck = await page.evaluate(() => {
+    const g = document.querySelector('#editorIn .cm-foldGutter');
+    const markers = g ? g.querySelectorAll('.cm-gutterElement span') : [];
+    return { hasGutter: !!g, markerCount: markers.length };
+  });
+  check(`FR-T/${width}px 输入区出现折叠槽与折叠箭头`, foldCheck.hasGutter && foldCheck.markerCount > 0, foldCheck);
+
+  // 用真实鼠标坐标点击折叠箭头（合成事件无坐标，CM6 gutter 依赖 posAtDOM）
+  const foldMarkerBox = await page.evaluate(() => {
+    const markers = document.querySelectorAll('#editorIn .cm-foldGutter .cm-gutterElement span');
+    for (const m of markers) {
+      const r = m.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2, t: m.textContent };
+    }
+    return null;
+  });
+  if (foldMarkerBox) {
+    await page.mouse.click(foldMarkerBox.x, foldMarkerBox.y);
+    await sleep(200);
+    const foldStateAfter = await page.evaluate(() => {
+      const ph = document.querySelector('#editorIn .cm-foldPlaceholder');
+      return {
+        hasPlaceholder: !!ph,
+        phText: ph ? (ph.textContent ?? '').trim() : '',
+      };
+    });
+    check(`FR-T/${width}px 点击箭头折叠出 [+] 占位符`,
+      foldStateAfter.hasPlaceholder && foldStateAfter.phText === '[+]', foldStateAfter);
+
+    // 点占位符恢复（真实坐标）
+    if (foldStateAfter.hasPlaceholder) {
+      const phBox = await page.evaluate(() => {
+        const ph = document.querySelector('#editorIn .cm-foldPlaceholder');
+        if (!ph) return null;
+        const r = ph.getBoundingClientRect();
+        return r.width > 0 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+      });
+      if (phBox) {
+        await page.mouse.click(phBox.x, phBox.y);
+        await sleep(200);
+        const unfoldState = await page.evaluate(() => ({
+          phCount: document.querySelectorAll('#editorIn .cm-foldPlaceholder').length,
+        }));
+        check(`FR-T/${width}px 点击 [+] 占位符恢复展开`, unfoldState.phCount === 0, unfoldState);
+      }
+    }
+  } else {
+    check(`FR-T/${width}px 点击箭头折叠出 [+] 占位符`, false, { reason: 'no fold marker' });
+  }
+
+  // 折叠槽令牌：铭牌底色（非 CM6 默认透明/白）
+  const foldStyle = await page.evaluate(() => {
+    const g = document.querySelector('#editorIn .cm-foldGutter');
+    if (!g) return { present: false };
+    const cs = getComputedStyle(g);
+    return { present: true, bg: cs.backgroundColor, font: cs.fontFamily, borderRight: cs.borderRightWidth };
+  });
+  check(`FR-T/${width}px 折叠槽已令牌化（非默认透明）`,
+    foldStyle.present && foldStyle.bg !== 'rgba(0, 0, 0, 0)' && foldStyle.font.includes('Plex Mono'), foldStyle);
+
+  // 转义 tab（无高亮档）无折叠点：FOLD_DOC 保留在输入区，切过去断言，再切回
+  await page.click('[data-tab="escape"]');
+  await sleep(350);
+  const escapeFold = await page.evaluate(() => {
+    const g = document.querySelector('#editorIn .cm-foldGutter');
+    const markers = g ? g.querySelectorAll('.cm-gutterElement span') : [];
+    return { hasGutter: !!g, markerCount: markers.length };
+  });
+  check(`FR-T/${width}px 转义 tab（无高亮档）无折叠箭头`, escapeFold.markerCount === 0, escapeFold);
+  await page.click('[data-tab="format"]');
+  await sleep(300);
+
   check(`AC-37/${width}px 零外部请求`, external.length === 0, external);
   await page.close();
 }
@@ -553,6 +638,23 @@ for (const width of WIDTHS) {
   check('N13/dark toolbar 阴影不再硬编码浅色值',
     !d.toolbarShadow.includes('26, 28, 33'), d);
   check('N13/dark 小字令牌对比度已提升', d.faint === '#8b939c', d);
+
+  // ── v1.7 / FR-T：深色下折叠槽令牌（AC-156） ──
+  const darkFold = await dark.evaluate(() => {
+    const g = document.querySelector('#editorIn .cm-foldGutter');
+    if (!g) return { present: false };
+    const cs = getComputedStyle(g);
+    const ph = document.querySelector('#editorIn .cm-foldPlaceholder');
+    return {
+      present: true,
+      bg: cs.backgroundColor,
+      font: cs.fontFamily,
+      phClass: ph ? ph.className : '(none)',
+    };
+  });
+  check('FR-T/dark 深色折叠槽令牌生效（非默认、Plex Mono）',
+    darkFold.present && darkFold.bg !== 'rgba(0, 0, 0, 0)' && darkFold.font.includes('Plex Mono'), darkFold);
+
   await dark.screenshot({ path: `${OUT}/v16-360-dark.png` });
   await dark.close();
 }

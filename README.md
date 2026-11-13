@@ -7,7 +7,7 @@
 > **零网络 · 零埋点 · 零落盘。** 全部转换在浏览器本地完成，
 > manifest 仅声明 `["storage", "sidePanel"]` 两项权限，**无任何 host 权限**。
 >
-> **当前版本 v1.6.0**（2026-11-10）—— **体验与性能批次**：类型面板真降级（搜索 + 分页 + 不重建 DOM）、严格档「修正可见」、深色一致性、320px 窄栏兜底、跨 tab 状态收口、下拉资源释放、**恢复编辑器内查找**（`Ctrl/Cmd+F`）；PRD 升 v1.9。详见 `docs/03-研发/v1.6.0-交付说明.md` 与下方版本历史。上一版 v1.5.1 为缺陷修复版；两版均已发布：[Release v1.5.1](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.5.1) · [Release v1.6.0](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.6.0)。两版合并台账见 `docs/03-研发/v1.5.1-v1.6.0-迭代交付总览.md`。
+> **当前版本 v1.7.0**（2026-11-13）—— **编辑器节点折叠批次**：输入区/输出区启用 JSON/Python 结构化折叠（折叠槽箭头 + `[+]` 文本占位符 + `Alt+Click` 手风琴折全部同级 + `foldKeymap` 快捷键），折叠状态零记忆零落盘；转义 tab 纯文本通道无折叠点；同时落地切 tab 时输入区语言档切换；PRD 升 v1.10（FR-T1～T8 / AC-148～156）。已知限制：切 tab 后首次 `Ctrl+F` 可能需敲一键激活（详见快捷键节）。详见 `docs/03-研发/v1.7.0-交付说明.md` 与下方版本历史。上一版 v1.6.0（体验与性能批次）已发布：[Release v1.6.0](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.6.0)。
 >
 > **最低 Chrome 版本 114**（`sidePanel` 于 114 引入；`sidePanel.close()` 需 141+，代码已有能力检测与 `window.close()` 兜底）。
 
@@ -49,7 +49,7 @@ npm run build           # 构建 → dist/
 
 单跑某一类：`npm run test:unit` / `test:prop` / `test:ac` / `bench`。
 
-**`npm run verify:ui`（v1.5 起为第二门禁，改 UI 必跑）**：puppeteer 驱动真实 Chrome，**75 项断言** —— CM6 部件令牌落地（`getComputedStyle` 实测）、三档宽度 resize 无溢出、浮层不被裁、`Ctrl+F` 搜索面板造型、深色 computed style、类型面板真降级、空态示例、`Tab` 焦点链、macOS Option 键位、`Esc` 二次确认等 jsdom 测不出的检查。
+**`npm run verify:ui`（v1.5 起为第二门禁，改 UI 必跑）**：puppeteer 驱动真实 Chrome，**91 项断言**（v1.7.0 起，v1.6.0 为 75 项） —— CM6 部件令牌落地（`getComputedStyle` 实测）、三档宽度 resize 无溢出、浮层不被裁、`Ctrl+F` 搜索面板造型、深色 computed style、类型面板真降级、空态示例、`Tab` 焦点链、macOS Option 键位、`Esc` 二次确认等 jsdom 测不出的检查。
 
 > `build` 于 v1.3 纳入 `verify:all`。此前产物审查可以被绕过 ——
 > `check:privacy` 检查的是**上一次构建留下的陈旧 `dist/`**。
@@ -108,10 +108,16 @@ npm run build           # 构建 → dist/
 | `Esc` | 依次关闭：对比浮层 → 自绘菜单 → 侧边栏（焦点在编辑器内时保留 CM6 语义） |
 | `Tab` / `Shift+Tab` | 正常切换焦点（v1.5.1 起不再被编辑器缩进拦截；缩进用 `Ctrl/Cmd+[` / `]`） |
 | `Ctrl/Cmd+F` | **编辑器内查找**（v1.6 起恢复 CM6 搜索面板；浏览器原生查找对虚拟滚动命中率差）。**macOS 上 `Cmd+F` 被浏览器查找占用，请用 `Ctrl+F`**（编辑器已显式补 `Control-f` 键位） |
+| `Ctrl/Cmd+Shift+[` / `]` | **折叠 / 展开光标处节点**（v1.7 起；macOS 上为 `Cmd+Alt+[` / `]`） |
+| `Ctrl+Alt+[` / `]` | **折叠全部 / 展开全部**（v1.7 起；仅 json / python 语言档生效，转义 tab 无结构不可折叠） |
 
 > **v1.5.1 变更**：`Ctrl/Cmd+Shift+C`（DevTools Inspect）、`Ctrl/Cmd+Shift+A`（标签页搜索）是 **Chrome 保留键**，网页收不到 keydown，故主键位改为 `Alt+C/S/A`；旧组合仍作兼容保留。所有 `Alt` 组合按物理键位判定，**macOS 上 `Option+1/2/3/T` 也可用**（原先 `Option` 会改写 `e.key` 为 `¡/™/£/†`，导致全部失效）。
 >
 > **v1.6 变更**：恢复 `Ctrl/Cmd+F` 的编辑器内查找（`search()` + `searchKeymap`，搜索面板已令牌化），**有意反转 v1.5「回落浏览器原生查找」的决策**；`Tab` / `Shift+Tab` 仍保持正常焦点切换，缩进用 `Ctrl/Cmd+[` / `]`。
+>
+> **v1.7 变更**：新增**节点折叠**（`foldGutter` + `foldKeymap`，占位符 `[+]` 文本；`Alt+Click` 折叠箭头为手风琴模式——同时折叠全部同级节点），**有意反转 v1.5 白名单「不装 foldGutter」的决策**（同 v1.6 恢复 search 的模式：这次为它正式造型了）。折叠仅 json / python 语言档可用；折叠状态零记忆，重转换后自然重置。
+>
+> **已知限制**（v1.6.0 起存在，v1.7.0 排查后记录）：切换 tab 后首次 `Ctrl/Cmd+F` 可能打不开搜索面板（CM6 panelPlugin 在编程式文档替换后的边角行为）——在编辑器内敲任意一键即恢复，不影响其他功能。升级 CodeMirror 依赖版本后可复测。
 >
 > **有输入时按 `Esc` 关闭侧边栏需要按两次**：首次只提示「当前输入将丢失」，3 秒内再按一次才真正关闭；空输入仍可一键关闭。这是为了避免误触后重开面板内容全失（扩展承诺输入零落盘）。
 >
@@ -292,7 +298,7 @@ docs/                     全过程文档（见下）
 |---|---|
 | `docs/01-需求/` | `需求规格.md`（要什么）、`PRD.md` **v1.9**（做成什么样算对，§8 含 AC-01~147，唯一正本；v1.5.1 见 §6 FR-R / §8.13，v1.6.0 见 §6 FR-S / §8.14） |
 | `docs/02-评审/` | `技术评审报告.md` v1.0（代码怎么写：架构、IR、目录分层、任务拆分） |
-| `docs/03-研发/` | `研发任务清单.md`、`spike-记录.md`、各版交付/发布说明；**现行：`v1.6.0-交付说明.md`**（版本存档：v1.1 ~ v1.5.1）；**`v1.5.1-v1.6.0-迭代交付总览.md`**（两版合并台账：N/E 清单逐条去向、门禁/产物/commit/tag 对照）；各版变更条目已并入 PRD v1.9 正文与本文档版本表 |
+| `docs/03-研发/` | `研发任务清单.md`、`spike-记录.md`、各版交付/发布说明；**现行：`v1.7.0-交付说明.md`**（版本存档：v1.1 ~ v1.6.0）；**`v1.5.1-v1.6.0-迭代交付总览.md`**（两版合并台账：N/E 清单逐条去向、门禁/产物/commit/tag 对照）；各版变更条目已并入 PRD v1.10 正文与本文档版本表 |
 | `docs/04-验收/` | `PRD-8-验收标准.md`（v1.0 基线 AC-01~52，历史存档；现行 AC-01~147 见 PRD §8）、`验收结论报告.md` |
 | `docs/05-缺陷/` | `缺陷7-UI初始化被storage阻塞.md`（真机 P0；v1.5.1 在放大页入口发现同类复发 N11） |
 | `docs/06-迭代/` | `v1.1-迭代提案.md`、`v1.1-需求变更清单.md` v4、`PRD-v1.3` / `PRD-v1.5` / `PRD-v1.6-变更条目.md`（均已合并存档）、`v1.3-承载形态调研与优化建议.md` 与 `v1.3-研发方案与改动清单.md`（已实施存档）、**`2026-11-02-项目全面梳理与优化建议.md`**（v1.5.0 全量采纳 + 2026-11-10 四象限复核，落地 v1.5.1 / v1.6.0，决策依据存档） |
@@ -323,6 +329,7 @@ docs/                     全过程文档（见下）
 | **v1.5.0** | **2026-11-03** | **全面优化**：梳理报告 D1～D27 全量落地（Map 回退明示、CM6 白名单扩展+全量令牌化 543→473KB、主题跟随系统、容错一键出口、转换 tab 压缩/美化与类型面板、路径开放到转换 tab、空态示例、清空/拖文件/内存片段/对比、全局快捷键、T2 提至 1M、Java 目标与转义链路进交叉校验）；`verify:ui` 升级为改 UI 必跑第二门禁 | **362 测试 / 67+16 样本 + 真机 60 项**（commit `e7c81d1` / tag `v1.5.0` / [release](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.5.0)） |
 | **v1.5.1** | **2026-11-10** | **缺陷修复版**：N11 放大页入口 await 顺序、N01 超大文本闸门统一、N02/N03 macOS 键位与浏览器保留键、N04 `Tab` 焦点链、N05 `Esc` 二次确认、N06 类型覆盖丢数据；顺手修 N07/N09/N15/N19/N20/N21，补 18 项回归；PRD 升 v1.8（FR-R1～R10 / AC-126～137）；新增 `minimum_chrome_version: 114` | **380 测试 / 83 项交叉 + 真机 66/66**（产物 474.10 kB / gzip 159.94 kB）；交付说明 `docs/03-研发/v1.5.1-交付说明.md`；commit `26748b7` + `1b54f1d` / tag `v1.5.1` / [release](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.5.1) |
 | **v1.6.0** | **2026-11-10** | **体验与性能批次**：N08 类型面板真降级（搜索/分页/指纹不重建）、N10 严格档修正可见、N13 深色令牌单写 + CM6 底色令牌化、N14 320px 兜底与菜单边界、N16 跨 tab 状态收口、N17 下拉资源释放、E4 恢复编辑器内查找、N12 对比上限、N18 路径口径说明；PRD 升 v1.9（FR-S1～S9 / AC-138～147） | **392 测试 / 83 项交叉 + 真机 75/75**（产物 501.19 kB / gzip 169.05 kB）；交付说明 `docs/03-研发/v1.6.0-交付说明.md`；commit `7ee46d7` + `806aa25` / tag `v1.6.0` / [release](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.6.0)；两版合并台账 `docs/03-研发/v1.5.1-v1.6.0-迭代交付总览.md` |
+| **v1.7.0** | **2026-11-13** | **编辑器节点折叠批次**：FR-T 输入/输出区结构化折叠（折叠槽箭头走铭牌令牌、`[+]` 文本占位符、`Alt+Click` 手风琴折全部同级、`foldKeymap` 快捷键、折叠态零记忆零落盘）、转义 tab 纯文本无折叠点（AC-150）、切 tab 输入区语言档切换；**有意反转 v1.5 白名单「不装 foldGutter」决策**（同 v1.6 恢复 search 模式）；排查并记录切 tab 后首次 `Ctrl+F` 需敲键激活的已知限制；PRD 升 v1.10（FR-T1～T8 / AC-148～156） | **407 测试 / 83 项交叉 + 真机 91/91**（产物 508.28 kB / gzip 171.32 kB）；交付说明 `docs/03-研发/v1.7.0-交付说明.md`；tag `v1.7.0` / [release](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.7.0) |
 
 **v1.1.1 真机 Chrome 冒烟 9 项全过**：方向控件可见、默认增加转义、切换即时生效、
 `{\"a\":1}` → `{"a":1}`、带外层引号一次解干净且提示、Base64 `中文`⟷`5Lit5paH` 往返、

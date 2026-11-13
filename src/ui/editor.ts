@@ -15,6 +15,13 @@
  * Ctrl+F，而 CM6 是虚拟滚动，浏览器查找命中率很差（看不见的 DOM 根本不存在）。
  * 这次只加 `search()` + `searchKeymap` 两个必要扩展，搜索面板已在 styles.css
  * 里令牌化；这是 v1.5「Ctrl+F 回落浏览器」决策的**有意反转**，PRD 已并入正文。
+ *
+ * v1.7 / FR-T：**启用结构化节点折叠** —— v1.5 / D15 白名单不装折叠的定论是
+ * 「用户不知道的意外功能且从未造型」；v1.6.0 交付后大文档浏览成为实测痛点，
+ * 本次为它正式造型（折叠槽走铭牌视觉、占位符用 [+] 文本）后引入。
+ * 与 E4 恢复 search 完全同构的**有意反转**，PRD v1.10 / §6 FR-T 已并入正文。
+ * 折叠能力挂在 langExt() 语言管线上：json / python 档启用，无高亮档（转义
+ * tab 纯文本）自然无折叠点 —— 无结构不折叠，与 FR-P8 同一原则。
  */
 
 import {
@@ -40,7 +47,19 @@ import {
   RangeSetBuilder,
   type Extension,
 } from '@codemirror/state';
-import { indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
+import {
+  indentOnInput,
+  bracketMatching,
+  syntaxHighlighting,
+  defaultHighlightStyle,
+  codeFolding,
+  foldGutter,
+  foldKeymap,
+  foldEffect,
+  unfoldEffect,
+  foldable,
+  foldedRanges,
+} from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
@@ -55,10 +74,152 @@ import { oneDark } from '@codemirror/theme-one-dark';
  */
 export type EditorLang = 'json' | 'python' | 'java';
 
+/**
+ * v1.7 / FR-T1：折叠能力随语言管线分流。
+ * json / python 档装 codeFolding + foldGutter（占位符 [+]，FR-T7）；
+ * 无高亮档（java 转义串）不装 —— 无结构不折叠，与 FR-P8 同一原则。
+ * foldGutter() 自带 codeFolding()（默认 ⋯ 占位符），这里显式传
+ * codeFolding({ placeholderText: '[+]' }) 覆盖默认（FR-T7 决策）。
+ */
+function foldExtensions(): Extension[] {
+  return [
+    codeFolding({ placeholderText: '[+]' }),
+    foldGutter({
+      openText: '▾',
+      closedText: '▸',
+      domEventHandlers: {
+        /** FR-T3：Alt+Click 手风琴 —— 折该节点 + 全部同级（CM6 默认不带，需自实现） */
+        mousedown: (view, line, event) => {
+          if (!(event as MouseEvent).altKey) return false;
+          return foldSiblings(view, line.from);
+        },
+      },
+    }),
+  ];
+}
+
+/**
+ * FR-T3：手风琴模式 —— 折叠 lineFrom 所在节点及其全部同级节点。
+ * 同级 = 与该节点在文档中同层并列的可折叠区间（起止行对齐判断）。
+ * 返回 true 表示已处理（阻止 gutter 默认 click 折单个）。
+ */
+function foldSiblings(view: EditorView, lineFrom: number): boolean {
+  const state = view.state;
+  // 该行的可折叠区间
+  const first = foldable(state, lineFrom, lineFrom);
+  if (!first) {
+    // 点的是已折叠行 → 展开同级（含自身）
+    const folded = foldedRanges(state).iter();
+    let target: { from: number; to: number } | null = null;
+    while (folded.value) {
+      const r = folded.from < lineFrom + 1 && folded.to > lineFrom ? { from: folded.from, to: folded.to } : null;
+      if (r) { target = r; break; }
+      folded.next();
+    }
+    if (!target) return false;
+    return unfoldSiblings(view, target);
+  }
+  // 收集同级：扫描全文档所有可折叠顶层区间，取与 first 同层（父区间相同）的
+  const siblings = collectSiblings(view, first);
+  const effects = siblings.map((r) => foldEffect.of(r));
+  if (effects.length) {
+    view.dispatch({ effects });
+    return true;
+  }
+  return false;
+}
+
+/** 展开与 target 同层且起点在 target 父区间内的已折叠节点（FR-T3 展开侧） */
+function unfoldSiblings(view: EditorView, target: { from: number; to: number }): boolean {
+  const state = view.state;
+  const parent = containingRange(view, target);
+  const folded = foldedRanges(state).iter();
+  const effects: ReturnType<typeof unfoldEffect.of>[] = [];
+  while (folded.value) {
+    const r = { from: folded.from, to: folded.to };
+    const p = containingRange(view, r);
+    if (sameParent(parent, p) && r.from >= target.from) {
+      effects.push(unfoldEffect.of(r));
+    }
+    folded.next();
+  }
+  if (effects.length) {
+    view.dispatch({ effects });
+    return true;
+  }
+  view.dispatch({ effects: unfoldEffect.of(target) });
+  return true;
+}
+
+/** 收集与 first 同层（父区间相同）的全部可折叠区间，含 first 自身 */
+function collectSiblings(view: EditorView, first: { from: number; to: number }): Array<{ from: number; to: number }> {
+  const state = view.state;
+  const parent = containingRange(view, first);
+  const out: Array<{ from: number; to: number }> = [];
+  // 逐行扫可折叠区间太粗（一行可能有多个括号对）；改用「顶层区间收集」：
+  // 从文档头开始，每找到一个可折叠区间就跳到区间尾，收集全部互不嵌套的顶层区间；
+  // 再递归进入 parent 区间内部收集与其同层者。first 的层级由 parent 决定。
+  const topRanges = collectTopRanges(state, 0, state.doc.length);
+  if (!parent) return topRanges; // 顶层：全部顶层区间即同级
+  // parent 内部的顶层区间 = first 的同级
+  return collectTopRanges(state, parent.from, parent.to);
+}
+
+/** 收集 [from, to) 内互不嵌套的顶层可折叠区间（foldAll 同款扫描法） */
+function collectTopRanges(state: import('@codemirror/state').EditorState, from: number, to: number): Array<{ from: number; to: number }> {
+  const out: Array<{ from: number; to: number }> = [];
+  let pos = from;
+  while (pos < to) {
+    const line = state.doc.lineAt(pos);
+    const lineTo = Math.min(line.to, to);
+    const range = foldable(state, line.from, lineTo);
+    if (range && range.to <= to) {
+      out.push(range);
+      pos = range.to + 1;
+    } else {
+      pos = line.to + 1;
+    }
+  }
+  return out;
+}
+
+/** 找包含 range 的最小可折叠区间（父区间）；无则 null。只在同层扫描可见范围 */
+function containingRange(view: EditorView, range: { from: number; to: number }): { from: number; to: number } | null {
+  const state = view.state;
+  const top = collectTopRanges(state, 0, state.doc.length);
+  return findContainer(top, range, state, 0);
+}
+
+function findContainer(
+  ranges: Array<{ from: number; to: number }>,
+  target: { from: number; to: number },
+  state: import('@codemirror/state').EditorState,
+  depth: number,
+): { from: number; to: number } | null {
+  for (const r of ranges) {
+    if (r.from < target.from && r.to > target.to) {
+      // r 包含 target；再看 r 内部有没有更小的包含者
+      const inner = collectTopRanges(state, r.from, r.to);
+      const deeper = findContainer(inner, target, state, depth + 1);
+      return deeper ?? r;
+    }
+  }
+  return null;
+}
+
+function sameParent(
+  a: { from: number; to: number } | null,
+  b: { from: number; to: number } | null,
+): boolean {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return a.from === b.from && a.to === b.to;
+}
+
 function langExt(lang: EditorLang): Extension[] {
-  if (lang === 'json') return [json()];
-  if (lang === 'python') return [python()];
-  return [];
+  if (lang === 'json') return [json(), ...foldExtensions()];
+  if (lang === 'python') return [python(), ...foldExtensions()];
+  return []; // 无高亮档：无折叠点（FR-T1）
 }
 
 /** 错误行装饰：由 StateField 管理，绝不直接操作 DOM（CM6 会重排行元素） */
@@ -145,6 +306,9 @@ export function createEditor(
   const readOnly = opts.readOnly ?? false;
   const dark = opts.dark ?? false;
 
+  let currentLang = lang;
+  let highlightOn = true;
+
   const extensions = [
     // v1.5 / D15 白名单：只装这台仪器真正用到的扩展
     lineNumbers(),
@@ -171,6 +335,10 @@ export function createEditor(
       ...defaultKeymap,
       ...(readOnly ? [] : historyKeymap),
       ...searchKeymap,
+      // v1.7 / FR-T4：折叠快捷键（CM6 默认：Ctrl-Shift-[ 折叠 / Ctrl-Shift-] 展开 /
+      // Ctrl-Alt-[ 全折 / Ctrl-Alt-] 全展；macOS 上自动映射为 Cmd-Alt-[ 等）。
+      // 与既有键位零冲突：全局 Alt+1/2/3/T/C/S/A、Ctrl+F、缩进 Mod-[/]、Tab 不拦截。
+      ...foldKeymap,
       // macOS 上 Mod 是 Cmd，而 Cmd+F 被浏览器查找占用（网页收不到 keydown）；
       // 显式补一条 Control-f，让 Mac 用户与真机脚本都能打开编辑器内查找。
       { key: 'Control-f', run: openSearchPanel },
@@ -218,13 +386,13 @@ export function createEditor(
     parent,
   });
 
-  let currentLang = lang;
-  let highlightOn = true;
-
   return {
     view,
     setDoc(text: string) {
       if (view.state.doc.toString() === text) return;
+      // v1.7 / FR-T5：全量替换文档时折叠态自然重置（折叠区间映射到新文本即失效）。
+      // CM6 foldState 是 StateField，事务按 changes 映射；整段替换时旧折叠区间
+      // 收缩为零长被清理，无需显式 unfoldAll。
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
     },
     getDoc() {

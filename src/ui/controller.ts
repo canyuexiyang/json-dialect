@@ -1112,6 +1112,9 @@ export class AppController {
     };
     this.tab = id;
     const workspace = this.workspaces[id];
+    // v1.7 / FR-T1：转义 tab 是纯文本通道，输入区切「无高亮」档 → 无折叠点；
+    // 其余 tab 用 python 档（默认）。折叠能力随 langExt 语言管线分流，不按 tab 特判。
+    this.in.setLang(id === 'escape' ? 'java' : 'python');
     this.suppressInput = true;
     try { this.in.setDoc(workspace?.input ?? ''); } finally { this.suppressInput = false; }
     this.setLocked(workspace?.locked ?? null);

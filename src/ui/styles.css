@@ -1273,7 +1273,8 @@ body.theme-dark .cm-line.cm-errorLine {
   outline: none;
 }
 
-/* 折叠占位（未启用 foldGutter，但 closeBrackets 缩进等无害保留此兜底） */
+/* 折叠占位符（v1.7 / FR-T7 启用：[+] 文本，走仪器令牌；
+   v1.5 预留的兜底样式随本版兑现） */
 .editor .cm-foldPlaceholder {
   background: var(--bg-recess);
   border: var(--rule) solid var(--border-strong);
@@ -1281,6 +1282,38 @@ body.theme-dark .cm-line.cm-errorLine {
   border-radius: var(--radius);
   padding: 0 6px;
   margin: 0 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 折叠槽（v1.7 / FR-T7）：与行号槽同为铭牌刻度列视觉，
+   右侧同款分隔线；箭头平时 --text-faint，hover 提亮为信号色 */
+.editor .cm-foldGutter {
+  background: var(--bg-recess);
+  border: none;
+  border-right: var(--rule) solid var(--border);
+  font-family: var(--mono);
+  font-size: 11px;
+  user-select: none;
+}
+
+.editor .cm-foldGutter .cm-gutterElement {
+  padding: 0 4px;
+  min-width: 14px;
+  cursor: pointer;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+.editor .cm-foldGutter .cm-gutterElement:hover,
+.editor .cm-foldGutter .cm-gutterElement.cm-foldGutter-open,
+.editor .cm-foldGutter .cm-gutterElement.cm-foldGutter-folded {
+  color: var(--signal);
+}
+
+/* 深色折叠槽跟随令牌（body.theme-dark 单写，FR-T7） */
+body.theme-dark .editor .cm-foldGutter {
+  background: var(--bg-recess);
 }
 
 /* 高亮特殊字符（控制字符的默认 ␀ 小方块）也走令牌 */
