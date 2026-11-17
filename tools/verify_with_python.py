@@ -86,7 +86,7 @@ def verify_escape_case(case, out):
 
 def main() -> int:
     if not os.path.isdir(SAMPLES):
-        print("samples/ 目录不存在，请先运行 tools/gen_samples.py")
+        print("samples/ 目录不存在，请从版本库恢复 samples/（不要运行 tools/gen_samples.py，它会把 83 条黄金样本退回 30 条）")
         return 1
 
     failures: list[str] = []

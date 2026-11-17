@@ -155,10 +155,8 @@ export function detect(tokens: Token[], rawText: string): DetectResult {
     if (scores.map === max) winners.push('map');
     if (winners.length > 1) {
       // 优先非 JSON 的最高分？不 —— 规范要求平局默认 JSON
+      // 多个非 JSON 平局时取 winners[0]（python > java > map 的入栈顺序）
       format = winners.includes('json') ? 'json' : winners[0];
-      if (format !== 'json' && !winners.includes('json')) {
-        // 多个非 JSON 平局，取第一个
-      }
       reasons.push(`平局 → ${format}`);
     } else {
       format = winners[0];

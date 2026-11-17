@@ -207,11 +207,16 @@ describe('M3 出口判据（§8.5 / §8.7）', () => {
     expect(r.output).not.toContain('>');
   });
 
-  it('AC-32 深浅色：样式表定义了深色变量并跟随系统偏好', () => {
-    // 主题切换由 CSS 变量 + body.theme-dark 实现，此处断言样式表定义了深色变量
-    const css = fs.readFileSync('src/ui/styles.css', 'utf8');
+  it('AC-32 深浅色：样式表定义了深色变量，控制器跟随系统偏好', () => {
+    // v1.6 / N13 起深色令牌只写 body.theme-dark 一份，系统偏好由控制器
+    // 同步段 matchMedia 判定（CSS 里已无媒体查询）。剥注释断言，避免注释假阳性。
+    const css = readCode('src/ui/styles.css');
     expect(css).toContain('body.theme-dark');
-    expect(css).toContain('prefers-color-scheme');
+    expect(css).not.toContain('@media (prefers-color-scheme: dark)');
+    const ctrl = readCode('src/ui/controller.ts');
+    expect(ctrl).toContain('matchMedia');
+    expect(ctrl).toContain('prefers-color-scheme: dark');
+    expect(ctrl).toContain('body.classList.toggle');
   });
 
   it('AC-49 放大用 window.open，无 chrome.tabs.create', () => {

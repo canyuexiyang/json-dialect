@@ -11,7 +11,7 @@
  */
 
 import { convert, computeStats, type ConvertResult } from '../core/index.js';
-import type { OutputLang, SourceFormat, TargetFormat } from '../core/types.js';
+import { FORMAT_LABEL, type OutputLang, type SourceFormat, type TargetFormat } from '../core/types.js';
 import {
   escapeText,
   ALL_ESCAPE_STYLES,
@@ -147,13 +147,6 @@ export interface InheritedState {
   wrapQuotes?: boolean;
 }
 
-const FORMAT_TEXT: Record<SourceFormat, string> = {
-  json: '标准 JSON',
-  python: 'Python 字面量',
-  java: 'Java 转义字符串',
-  map: 'Map.toString()',
-};
-
 /** v1.4：路径条徽标文案。键与值同一条路径，靠这个徽标区分「我正在看的是哪个」 */
 const KIND_LABEL: Record<string, string> = {
   string: '字符串',
@@ -205,9 +198,8 @@ export class AppController {
   private escapeDir: EscapeDir = 'encode';
   /** FR-D13：已由用户点击确认剥离的日志前缀（下次输入变化即失效） */
   private strippedPrefix = '';
-  /** 转义 tab 的输出与错误（不走 ConvertResult） */
+  /** 转义 tab 的输出（纯文本通道，不走 ConvertResult） */
   private escapeOutput = '';
-  private escapeError: string | undefined;
   /** v1.2：可造型下拉的装饰句柄（保留以便销毁/降级） */
   private selects: SelectHandle[] = [];
   /** v1.2：入场动画只跑一次，动画结束后摘掉 class，避免影响后续交互 */
@@ -295,6 +287,9 @@ export class AppController {
       dark: this.dark,
       onCursor: (offset) => this.onCursor('out', offset),
     });
+    // v1.7 / FR-T1：继承态可能落在转义 tab，输入区必须立刻切到无高亮档，
+    // 否则从放大页接过来的「转义」页会残留 Python 高亮与折叠 gutter（违反 AC-150）。
+    this.in.setLang(this.tab === 'escape' ? 'java' : 'python');
 
     // v1.2：把原生 select 升级为可造型下拉。
     // 仍在同步段内 —— 它只操作 DOM，无 await；且失败必须静默降级，
@@ -374,6 +369,8 @@ export class AppController {
    */
   inheritFromSession(input: string, inherited: InheritedState): void {
     this.applyInherited(inherited);
+    // 迟到的交接态也可能把 tab 改成 escape；同 init 同步段，语言档必须跟上。
+    this.in.setLang(this.tab === 'escape' ? 'java' : 'python');
     this.prefsRevision++;
     this.renderTabs();
     this.syncTabControls();
@@ -427,6 +424,16 @@ export class AppController {
     }
   }
 
+  /**
+   * 只替换判定条文案，保留 LED 状态灯子元素。
+   * 老测试挂的是没有 LED 的精简 DOM，故同时兼容「没有文案 span」的情形。
+   */
+  private setFmtLabel(text: string): void {
+    const label = this.dom.fmtLabel.querySelector<HTMLElement>('.detectbar__text');
+    if (label) label.textContent = text;
+    else this.dom.fmtLabel.textContent = text;
+  }
+
   /** 读取界面偏好；超时或失败都按默认值继续，不影响已就绪的 UI */
   private async applyPrefsWhenReady(): Promise<void> {
     const fallback: Prefs = {};
@@ -467,17 +474,18 @@ export class AppController {
     // v1.5 / D17：只有偏好**真的改变了会产出不同结果的字段**才重跑。
     // 原条件 `compactChanged || this.tab` 里 this.tab 恒为真值 ——
     // 每次启动只要有输入就多跑一次 convert。
+    // 先把偏好落到字段，再与 prev 快照比；否则 prev 是同一个值，changed 永远为假。
+    if (prefs.compact !== undefined) this.compact = prefs.compact;
     const changed =
       this.tab !== prev.tab ||
       this.target !== prev.target ||
       this.strict !== prev.strict ||
-      this.compact !== prefs.compact ||
+      this.compact !== prev.compact ||
       this.escapeDir !== prev.escapeDir ||
       this.wrapQuotes !== prev.wrapQuotes;
-    if (prefs.compact !== undefined) this.compact = prefs.compact;
 
     // 已经有输出就按新偏好重渲染一次，保持视觉一致
-    if (changed || this.compact !== prev.compact) {
+    if (changed) {
       const text = this.in.getDoc();
       if (text.trim() !== '') this.run(text);
     }
@@ -734,6 +742,9 @@ export class AppController {
       return r.ir;
     }
     const text = this.out.getDoc();
+    // v1.7 体检：闸门必须早于解析。原先在 pathUnavailableReason() 里才判 T2，
+    // 光标首次移动已经把 >1M 输出整篇 lex+parse 了一遍，闸门形同虚设。
+    if (text.length > T2) return undefined;
     const lang = this.lastGoodLang;
     if (!supportsPath(lang)) return undefined;
     const cache = this.outPathCache;
@@ -907,7 +918,7 @@ export class AppController {
         return;
       }
       const isAltT = e.code === 'KeyT' || e.key === 't' || e.key === 'T' || e.key === '†';
-      if (e.altKey && !mod && isAltT) {
+      if (e.altKey && !mod && !e.shiftKey && isAltT) {
         if (this.opts.surface === 'panel') {
           e.preventDefault();
           void this.handleEnlarge();
@@ -1444,14 +1455,14 @@ export class AppController {
     this.updateStats(text, result.output);
 
     // 更新判定条
-    this.dom.fmtLabel.textContent = FORMAT_TEXT[result.source];
+    this.setFmtLabel(FORMAT_LABEL[result.source]);
     this.dom.fmtSelect.value = result.source;
     for (const select of this.selects) select.sync();
 
-    // 编辑器语言随输出方向切换
-    this.out.setLang(result.outputLang);
-
+    // 编辑器语言随**显示中的文本**切换：错误/超时态显示的是 lastGoodOutput，
+    // 必须用 lastGoodLang 高亮；成功态才用本次结果的 outputLang。
     if (result.status === 'error') {
+      this.out.setLang(this.lastGoodLang);
       // FR-D6/D7：高亮出错行 + 保留上一次成功结果置灰 + 禁用复制/下载
       this.dom.typePanel.hidden = true;
       this.syncSameTargetLabel(); // v1.5 / D1：失败态不显示回退标签
@@ -1473,6 +1484,7 @@ export class AppController {
     }
 
     if (result.status === 'timeout') {
+      this.out.setLang(this.lastGoodLang);
       this.out.setDoc(this.lastGoodOutput);
       this.dom.staleBadge.hidden = !this.lastGoodOutput;
       this.dom.editorOut.classList.toggle('is-stale', !!this.lastGoodOutput);
@@ -1490,6 +1502,7 @@ export class AppController {
     this.panel.retain(new Set(result.values.map((value) => value.path)));
     this.lastGoodOutput = result.output;
     this.lastGoodLang = result.outputLang;
+    this.out.setLang(result.outputLang);
     this.out.setDoc(result.output);
     this.dom.staleBadge.hidden = true;
     this.dom.editorOut.classList.remove('is-stale');
@@ -1501,13 +1514,13 @@ export class AppController {
 
     // 回退提示（FR-B11 / AC-48）
     if (result.fallbackFrom) {
-      this.setStatus(`已按 ${FORMAT_TEXT[result.source]} 格式解析`);
+      this.setStatus(`已按 ${FORMAT_LABEL[result.source]} 格式解析`);
     } else if (result.sameTargetFallback) {
       // v1.5 / D1：格式化 tab 下 Map 来源没有对应序列化器，回退 Python 输出。
       // 这是唯一一种「输出语言 ≠ 来源语言」的静默变化 —— 必须在状态条说破。
       this.setStatus(`Map.toString() 不作输出目标（有损），已按 Python 字面量输出`);
     } else {
-      this.setStatus(result.fixes.length ? `已修正 · ${FORMAT_TEXT[result.outputLang]}` : `已完成 · ${FORMAT_TEXT[result.outputLang]}`);
+      this.setStatus(result.fixes.length ? `已修正 · ${FORMAT_LABEL[result.outputLang]}` : `已完成 · ${FORMAT_LABEL[result.outputLang]}`);
     }
 
     this.clearSuggestion();
@@ -1529,7 +1542,6 @@ export class AppController {
   private runEscape(text: string): void {
     const res = escapeText(text, this.escapeStyle, this.escapeDir, { wrapQuotes: this.wrapQuotes });
     this.escapeOutput = res.output;
-    this.escapeError = res.error;
 
     if (!res.ok) {
       // FR-I3：失败不返回部分结果，保留旧输出置灰 + 禁用复制/下载
@@ -1784,7 +1796,7 @@ export class AppController {
     this.clearPath();
     // v1.5 / D12：空态给一键示例，并撤掉判定条上误导性的「标准 JSON」默认值
     if (this.dom.emptyHints) this.dom.emptyHints.hidden = false;
-    this.dom.fmtLabel.textContent = '待输入';
+    this.setFmtLabel('待输入');
     this.updateStats('', '');
   }
 
@@ -1922,17 +1934,6 @@ export class AppController {
     }
   }
 
-  /** 清除内联 flex / min-height，回到样式表默认值（形态切换或销毁时用） */
-  private clearSplit(): void {
-    const splitter = this.dom.splitter;
-    const inPane = splitter?.parentElement?.querySelector('.pane--in') as HTMLElement | null;
-    if (!inPane) return;
-    inPane.style.removeProperty('flex');
-    inPane.style.removeProperty('min-height');
-    const outPane = splitter?.parentElement?.querySelector<HTMLElement>('.pane--out');
-    outPane?.style.removeProperty('flex');
-  }
-
   private startDrag(e: PointerEvent): void {
     const splitter = this.dom.splitter;
     if (!splitter) return;
@@ -2008,6 +2009,45 @@ export class AppController {
 
   get input(): string {
     return this.in.getDoc();
+  }
+
+  /**
+   * 页面级刷新快照（D23）：导出当前会话态供 app.ts 写入 sessionStorage。
+   * 只存在于页面内存，绝不写 chrome.storage.local / session。
+   */
+  snapshotState(): InheritedState {
+    const workspaces: Record<string, WorkspaceState> = {};
+    for (const [id, w] of Object.entries(this.workspaces)) {
+      workspaces[id] = {
+        input: w.input,
+        source: w.locked ?? undefined,
+        locked: w.locked !== null,
+        overrides: [...w.overrides],
+        strippedPrefix: w.strippedPrefix,
+      };
+    }
+    // 当前 tab 的工作区只在切走时才入库，这里必须现场补最新文本。
+    workspaces[this.tab] = {
+      input: this.in.getDoc(),
+      source: this.locked ?? this.state?.source ?? undefined,
+      locked: this.locked !== null,
+      overrides: [...this.panel.overrides().entries()],
+      strippedPrefix: this.strippedPrefix,
+    };
+    return {
+      workspaces,
+      strippedPrefix: this.strippedPrefix,
+      source: this.locked ?? this.state?.source ?? undefined,
+      locked: this.locked !== null,
+      compact: this.compact,
+      overrides: [...this.panel.overrides().entries()],
+      tab: this.tab,
+      target: this.target,
+      strict: this.strict,
+      escapeStyle: this.escapeStyle,
+      escapeDir: this.escapeDir,
+      wrapQuotes: this.wrapQuotes,
+    };
   }
 
   get output(): string {

@@ -37,7 +37,7 @@ __WIDTH_HINT__
 <header class="detectbar">
   <span class="detectbar__label" id="fmtLabel">
     <span class="detectbar__led" aria-hidden="true"></span>
-    标准 JSON
+    <span class="detectbar__text">标准 JSON</span>
   </span>
   <span class="badge" id="lockBadge" hidden>手动锁定</span>
   <!-- v1.5 / D1：格式化 tab 下 Map 来源无对应目标，回退 Python 输出 ——

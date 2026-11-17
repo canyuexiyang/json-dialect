@@ -19,7 +19,7 @@ import { parseJavaEsc } from './parse/javaEsc.js';
 import { toJson } from './serialize/toJson.js';
 import { toPython, type TypeOverride } from './serialize/toPython.js';
 import { toJavaEsc } from './serialize/toJavaEsc.js';
-import { marksToFixes, dedupeFixes, type FixEntry, type DuplicateInfo } from './fixLog.js';
+import { marksToFixes, dedupeFixes, clipSnippet, type FixEntry, type DuplicateInfo } from './fixLog.js';
 import { Deadline, ParseError, TimeoutError } from './errors.js';
 import { findLogPrefix, type LogPrefix } from './logPrefix.js';
 import { applyOverrides } from './overrides.js';
@@ -113,12 +113,6 @@ const PARSERS: Record<
   java: parseJavaEsc,
 };
 
-/** 修正记录片段截断，与 fixLog.ts 的 clip 保持一致 */
-function clipForMark(s: string): string {
-  const one = s.replace(/\n/g, '\\n');
-  return one.length > 24 ? one.slice(0, 24) + '…' : one;
-}
-
 /**
  * FR-F4：字符数按 Unicode 码点；行数 = 换行符数 + 1
  * v1.5.1 / N09：原先 `[...text].length` 会为 20MB 文本额外物化一个千万级数组，
@@ -209,7 +203,7 @@ function convertWithDeadline(text: string, opts: ConvertOptions, deadline: Deadl
       type: 'prefix_stripped',
       line: 1,
       col: 0,
-      before: clipForMark(opts.strippedPrefix),
+      before: clipSnippet(opts.strippedPrefix),
       after: '',
     };
   }
@@ -217,7 +211,9 @@ function convertWithDeadline(text: string, opts: ConvertOptions, deadline: Deadl
   // v1.5.1 / N21：原先允许外部传 tokens / rawText 复用，但全仓零调用点，
   // 反而留下 `lexed` 可能为 null 的非空断言。统一走一次 lexer。
   const tokens = lex(working, { deadline }).tokens;
-  const sig = tokens;
+  // 四个 parser 共享同一份 Token[]：空白/注释由 parser 内部按需忽略，
+  // 这里不做任何预先过滤，避免二次扫描与偏移漂移。
+  const parseTokens = tokens;
 
   // v1.5 / D22：只有注释与空白时，解析器会在 need() 里报「内容不完整」——
   // 用户看到的是语法错误，但真实情况是「压根没有可转换的内容」。
@@ -253,7 +249,7 @@ function convertWithDeadline(text: string, opts: ConvertOptions, deadline: Deadl
     const parser = PARSERS[fmt];
     // 严格层
     try {
-      const r = parser(sig, { strict: true, deadline, rawText: working });
+      const r = parser(parseTokens, { strict: true, deadline, rawText: working });
       return buildResult(
         r.ir,
         r.marks,
@@ -282,7 +278,7 @@ function convertWithDeadline(text: string, opts: ConvertOptions, deadline: Deadl
     }
     // 宽松层
     try {
-      const r = parser(sig, { strict: false, deadline, rawText: working });
+      const r = parser(parseTokens, { strict: false, deadline, rawText: working });
       return buildResult(
         r.ir,
         r.marks,

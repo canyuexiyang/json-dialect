@@ -1,4 +1,6 @@
-import { defineConfig } from 'vite';
+// vitest 的 defineConfig 扩展了 vite 的配置类型，直接支持 test 字段；
+// 原先从 'vite' 导入再 `as any` 会让整个配置失去类型校验。
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   build: {
@@ -27,4 +29,4 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     environment: 'node',
   },
-} as any);
+});

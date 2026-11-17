@@ -39,7 +39,8 @@ const ACTION_TEXT: Record<Mark['type'], string> = {
 
 const MAX_SNIPPET = 24;
 
-function clip(s: string): string {
+/** 修正记录 / 前缀片段共用的截断口径（24 字符 + 省略号，换行先可见化） */
+export function clipSnippet(s: string): string {
   const one = s.replace(/\n/g, '\\n');
   return one.length > MAX_SNIPPET ? one.slice(0, MAX_SNIPPET) + '…' : one;
 }
@@ -48,8 +49,8 @@ export function marksToFixes(marks: Mark[]): FixEntry[] {
   return marks.map((m) => ({
     line: m.line,
     col: m.col,
-    before: clip(m.before),
-    after: clip(m.after),
+    before: clipSnippet(m.before),
+    after: clipSnippet(m.after),
     action: ACTION_TEXT[m.type] ?? m.type,
   }));
 }

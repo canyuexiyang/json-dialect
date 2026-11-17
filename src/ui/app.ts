@@ -5,7 +5,8 @@
  *
  * v1.5 / D23：chrome.storage.session 读后即清（FR-H7）与「刷新保留」天然冲突 ——
  * 消费后刷新页面，session 已空，一切归零。现在消费成功后把快照写进
- * sessionStorage（页面级内存，非持久化、不落盘，浏览器关闭即清），刷新时恢复。
+ * sessionStorage（页面级内存，非持久化、不落盘，浏览器关闭即清），并在页面
+ * 卸载前持续同步当前编辑态，刷新时恢复。
  *
  * v1.5.1 / N11【P0】：**编辑器创建必须先于任何 await**。
  * 原实现把 `await consumeSession()` 排在 `mountShell()` 之前，一旦 storage.session
@@ -56,6 +57,19 @@ function main(): void {
   void app.init(snapshot?.input ?? '', snapshot?.inherited).catch(() => {
     /* init 内部已全量兜底；这里只兜住极端异常，避免 unhandled rejection */
   });
+
+  // D23 体检：原实现只在消费跨页交接时写一次快照，之后用户的所有编辑、
+  // 切 tab、类型覆盖都不会再更新 —— 刷新会退回刚继承时的初始文本。
+  // 页面卸载前把**当前**状态写入页面级 sessionStorage（非持久化、不落盘）。
+  const saveSnapshot = (): void => {
+    try {
+      writeSnapshot(app.input, app.snapshotState());
+    } catch {
+      /* init 极端失败时编辑器可能不存在；快照失败不能影响页面卸载 */
+    }
+  };
+  window.addEventListener('pagehide', saveSnapshot);
+  window.addEventListener('beforeunload', saveSnapshot);
 
   // ── ② 异步段：交接态迟到只影响继承值，界面此刻已经可用 ────────────────────
   // 读后立即清除（FR-H7）；超时按「无交接」处理，保留刷新快照或空白首屏。

@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""生成 samples/ 30 条真实样本（PRD §9.1 北极星「一次搞定率」回归集）"""
+"""生成 samples/ 30 条真实样本（PRD §9.1 北极星「一次搞定率」回归集）
+
+体检提示：当前黄金样本集是 67 convert + 16 escape = 83 条，manifest 含
+format / target / strippedPrefix 等本脚本不写的字段。直接运行本脚本会把
+samples/manifest.json 打回 30 条并覆盖同名 .in.txt，因此默认拒绝执行；
+只有明确 `--force` 才允许覆盖（用于从零重建历史回归集）。
+"""
 import io
 import os
+import sys
 import json
 
 SAMPLES = [
@@ -40,6 +47,12 @@ SAMPLES = [
 
 
 def main():
+    force = "--force" in sys.argv[1:]
+    if os.path.exists("samples/manifest.json") and not force:
+        raise SystemExit(
+            "拒绝覆盖现有 samples/manifest.json（当前 83 条黄金样本）。"
+            "如确需从零重建 30 条历史样本，请显式运行：python3 tools/gen_samples.py --force"
+        )
     os.makedirs("samples", exist_ok=True)
     manifest = []
     for name, fmt, text in SAMPLES:

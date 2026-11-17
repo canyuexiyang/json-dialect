@@ -230,12 +230,16 @@ describe('M3-5 深浅色（AC-32 / FR-F7）', () => {
     const orig = window.matchMedia;
     window.matchMedia = ((q: string) =>
       ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} }) as unknown as MediaQueryList);
-    const { dom } = await make();
-    // controller.init 内依据 matchMedia 判定，此处直接断言类已加
-    document.body.classList.add('theme-dark'); // init 内部行为
-    expect(document.body.classList.contains('theme-dark')).toBe(true);
-    window.matchMedia = orig;
-    expect(dom).toBeTruthy();
+    try {
+      document.body.classList.remove('theme-dark');
+      const { dom } = await make();
+      // 类必须由 controller.init 依据 matchMedia 自己加上，测试不能自己加再断言
+      expect(document.body.classList.contains('theme-dark')).toBe(true);
+      expect(dom).toBeTruthy();
+    } finally {
+      window.matchMedia = orig;
+      document.body.classList.remove('theme-dark');
+    }
   });
 });
 
@@ -251,13 +255,16 @@ describe('M3-6 性能三档降级（FR-G2/G3/G4）', () => {
     expect(dom.statusMsg.textContent).not.toContain('关闭实时转换');
   });
 
-  it('> 500k 字符：关闭实时转换并给出提示', async () => {
+  it('> 1M 字符（T2）：关闭实时转换并给出提示', async () => {
     const { ctrl, dom } = await make();
-    const big = '{"a": "' + 'x'.repeat(500_001) + '"}';
-    // schedule() 是输入变更路径；此处直接断言它的分支行为
-    const status = (ctrl as unknown as { schedule?: () => void }) && dom.statusMsg;
-    ctrl.run(big); // run 仍可手动触发（转换按钮）
-    expect(status).toBeTruthy();
+    // v1.5 / D19 起 T2 已从 500k 提到 1M；旧用例用 500k 且断言恒真，等于零覆盖。
+    const big = '{"a": "' + 'x'.repeat(1_000_001) + '"}';
+    // setInput 走编辑器 onChange → schedule() → 统一闸门，正是被测试的路径
+    ctrl.setInput(big);
+    expect(dom.statusMsg.textContent).toContain('关闭实时转换');
+    expect(document.getElementById('oversizeBox')).toBeTruthy();
+    expect(dom.btnConvert.textContent).toBe('转换');
+    expect(ctrl.output).toBe(''); // 闸门必须拦住自动转换，run() 只能由用户显式触发
   });
 });
 

@@ -98,6 +98,12 @@ if (distFiles.length === 0) {
   for (const f of distFiles) {
     const s = readIfExists(f);
     if (!s) continue;
+    // 头注释承诺「源码与产物都无网络 API」：这里必须真的把 netPatterns
+    // 用在产物上，否则依赖把 fetch 打进 bundle 时静态门禁会漏检。
+    for (const [re, label] of netPatterns) {
+      const hits = s.match(re);
+      if (hits) failures.push(`${path.relative(root, f)}: 产物含网络 API ${label}`);
+    }
     const cdnScript = s.match(/<script[^>]+src=["']https?:\/\/[^"']+/g);
     if (cdnScript) failures.push(`${path.relative(root, f)}: 含外部 CDN script`);
     const cdnLink = s.match(/<link[^>]+href=["']https?:\/\/[^"']+/g);
@@ -105,7 +111,7 @@ if (distFiles.length === 0) {
     const tabsCreate = s.match(/chrome\.tabs\.create/g);
     if (tabsCreate) failures.push(`${path.relative(root, f)}: 含 chrome.tabs.create（违反 AC-49）`);
   }
-  notes.push(`审查产物 ${distFiles.length} 个文件，无外部 CDN、无 chrome.tabs.create`);
+  notes.push(`审查产物 ${distFiles.length} 个文件，无网络 API、无外部 CDN、无 chrome.tabs.create`);
 }
 
 // ---- 输出 ----

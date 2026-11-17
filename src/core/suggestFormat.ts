@@ -10,7 +10,7 @@
 
 import { lex } from './lexer.js';
 import { detect } from './detect.js';
-import type { SourceFormat } from './types.js';
+import { FORMAT_LABEL, type SourceFormat } from './types.js';
 
 export interface FormatSuggestion {
   format: SourceFormat;
@@ -18,13 +18,6 @@ export interface FormatSuggestion {
   /** 命中该格式的信号说明，用于给用户解释「为什么建议你切这个」 */
   reason: string;
 }
-
-const LABEL: Record<SourceFormat, string> = {
-  json: '标准 JSON',
-  python: 'Python 字面量',
-  java: 'Java 转义字符串',
-  map: 'Map.toString()',
-};
 
 /**
  * 给出建议切换的来源格式。
@@ -51,7 +44,7 @@ export function suggestFormats(
 
   for (const f of cands) {
     if (scores[f] <= 0) continue;
-    out.push({ format: f, label: LABEL[f], reason: `文本中检测到 ${LABEL[f]} 的特征` });
+    out.push({ format: f, label: FORMAT_LABEL[f], reason: `文本中检测到 ${FORMAT_LABEL[f]} 的特征` });
     if (out.length >= limit) break;
   }
   if (out.length > 0) return out;
@@ -61,7 +54,7 @@ export function suggestFormats(
   const DEFAULT_ORDER: SourceFormat[] = ['python', 'json', 'map', 'java'];
   for (const f of DEFAULT_ORDER) {
     if (f === failed) continue;
-    out.push({ format: f, label: LABEL[f], reason: '未识别到明确特征，可尝试手动切换' });
+    out.push({ format: f, label: FORMAT_LABEL[f], reason: '未识别到明确特征，可尝试手动切换' });
     if (out.length >= limit) break;
   }
   return out;
@@ -73,5 +66,5 @@ export function topSuggestion(text: string, failed: SourceFormat): FormatSuggest
 }
 
 export function formatLabel(f: SourceFormat): string {
-  return LABEL[f];
+  return FORMAT_LABEL[f];
 }

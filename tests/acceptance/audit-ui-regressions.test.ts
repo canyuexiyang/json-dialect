@@ -49,7 +49,8 @@ describe('审查回归：用户操作与状态',()=>{
   it('大文本立即使旧输出不可导出，旧防抖不能覆盖当前内容',async()=>{
     vi.useFakeTimers();const {app,dom}=await setup();app.setInput('{"a":1}');
     const internal=app as unknown as {in:ReturnType<typeof createEditor>};
-    internal.in.setDoc('{"a":2}');internal.in.setDoc('x'.repeat(500001));
+    // T2=1M（v1.5 / D19）：旧 500k 已低于闸门，测不到「大文本拦截」语义。
+    internal.in.setDoc('{"a":2}');internal.in.setDoc('x'.repeat(1000001));
     expect(dom.btnCopy.disabled).toBe(true);expect(dom.btnDownload.disabled).toBe(true);expect(dom.staleBadge.hidden).toBe(false);
     await vi.advanceTimersByTimeAsync(400);expect(dom.btnCopy.disabled).toBe(true);
   });
@@ -125,4 +126,34 @@ it('标签页打开失败保留侧边栏与输入',async()=>{
   vi.spyOn(window,'open').mockReturnValue(null);dom.enlarge!.click();
   for(let i=0;i<12;i++) await Promise.resolve();
   expect(close).not.toHaveBeenCalled();expect(app.input).toBe('{"a":1}');expect(dom.statusMsg.textContent).toContain('未能打开');
+});
+
+describe('审查回归：继承与刷新快照',()=>{
+  it('继承到转义 tab 时输入区不残留高亮/折叠语言档',async()=>{
+    document.body.innerHTML='<main id="app"></main>';
+    const dom=mountShell('panel');const app=new AppController(dom,{surface:'tab'});
+    await app.init("{'a': 1}",{tab:'escape'});
+    const internal=app as unknown as {in:ReturnType<typeof createEditor>};
+    expect(internal.in.view.state.facet(language)).toBeNull();
+    expect(dom.tabEscape?.getAttribute('aria-selected')).toBe('true');
+  });
+  it('判定条更新文案但保留 LED 状态灯',async()=>{
+    const {app,dom}=await setup();
+    expect(dom.fmtLabel.querySelector('.detectbar__led')).not.toBeNull();
+    app.setInput("{'a': 1}");
+    expect(dom.fmtLabel.querySelector('.detectbar__led')).not.toBeNull();
+    expect(dom.fmtLabel.textContent).toContain('Python 字面量');
+    app.setInput('');
+    expect(dom.fmtLabel.querySelector('.detectbar__led')).not.toBeNull();
+    expect(dom.fmtLabel.textContent).toContain('待输入');
+  });
+  it('刷新快照导出当前 tab 与各工作区的最新输入',async()=>{
+    const {app}=await setup();app.setInput('{"x":1}');
+    app.switchTab('escape');app.setInput('hello');
+    const snapshot=app.snapshotState();
+    expect(snapshot.tab).toBe('escape');
+    expect(app.input).toBe('hello');
+    expect(snapshot.workspaces?.format?.input).toBe('{"x":1}');
+    expect(snapshot.workspaces?.escape?.input).toBe('hello');
+  });
 });
