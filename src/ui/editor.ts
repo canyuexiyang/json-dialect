@@ -276,6 +276,13 @@ export interface EditorHandle {
   /** 动态开关语法高亮（D-4） */
   setHighlight(on: boolean): void;
   setLang(lang: EditorLang): void;
+  /**
+   * v1.7.2：聚焦编辑器并打开查找面板。
+   *
+   * 切 tab 后焦点留在 tab 按钮上，CM6 的 keymap 收不到 Ctrl+F；
+   * 由控制器的全局键位兜底调用，避免「切 tab 后首次查找失效」。
+   */
+  openSearch(): void;
   /** v1.5 / D4：运行时切换深浅色主题（跟随系统），不重建编辑器 */
   setDark(on: boolean): void;
   /** 高亮错误行（M2-2） */
@@ -397,6 +404,13 @@ export function createEditor(
     },
     getDoc() {
       return view.state.doc.toString();
+    },
+    openSearch() {
+      // v1.7.2：先显式聚焦再开面板。切 tab 后焦点停在 tab 按钮时，
+      // Ctrl+F 不会进入 CM6 keymap；仅 dispatch 面板而不管焦点，
+      // 面板虽可能出现但输入框拿不到焦点，用户仍会以为查找没生效。
+      view.focus();
+      openSearchPanel(view);
     },
     setHighlight(on: boolean) {
       if (on === highlightOn) return;

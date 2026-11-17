@@ -598,6 +598,32 @@ for (const width of WIDTHS) {
   await page.click('[data-tab="format"]');
   await sleep(300);
 
+  // ── v1.7.2 / FR-U9：切 tab 后焦点留在 tab 按钮上，Ctrl+F 由全局兜底接管 ──
+  // 上一步点击「格式化」后，真实 Chrome 的焦点停在 tab 按钮上 —— 这正是
+  // 「切 tab 后首次查找打不开」的真实状态（CM6 keymap 只监听编辑器内部）。
+  const tabFocus = await page.evaluate(() => ({
+    isTab: !!document.activeElement?.closest?.('.tab'),
+    inCm: !!document.activeElement?.closest?.('.cm-editor'),
+  }));
+  await page.keyboard.down('Control');
+  await page.keyboard.press('KeyF');
+  await page.keyboard.up('Control');
+  await sleep(200);
+  const tabSearch = await page.evaluate(() => {
+    const panel = document.querySelector('#editorIn .cm-panels');
+    return {
+      open: !!panel,
+      hasInput: !!panel?.querySelector('input'),
+      focusedInEditor: !!document.activeElement?.closest?.('#editorIn'),
+    };
+  });
+  check(`E5/${width}px 切 tab 后焦点在 tab 上，Ctrl+F 仍打开输入区查找`,
+    tabFocus.isTab && !tabFocus.inCm &&
+      tabSearch.open && tabSearch.hasInput && tabSearch.focusedInEditor,
+    { tabFocus, tabSearch });
+  await page.keyboard.press('Escape');
+  await sleep(120);
+
   check(`AC-37/${width}px 零外部请求`, external.length === 0, external);
   await page.close();
 }

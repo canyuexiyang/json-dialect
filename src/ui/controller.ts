@@ -896,6 +896,8 @@ export class AppController {
    *  Alt+1/2/3 直达 tab；Alt+T 打开标签页（panel 形态）；
    *  Alt+C 复制输出、Alt+S 下载、Alt+A 全选输出并聚焦
    *  （K2：CM6 的 Ctrl+A 只全选当前编辑器，两个编辑器同页时用它直达输出）。
+   *  v1.7.2：Ctrl/Cmd+F 在焦点不在编辑器内时由全局兜底打开输入区查找面板
+   *  （切 tab 后焦点停在 tab 按钮上的场景；编辑器内仍走 CM6 searchKeymap）。
    *  v1.5.1：主键位从 Mod+Shift+C/S/A 改为 Alt+…，因为前三者是 Chrome 保留键；
    *  旧键位仍作兼容保留。所有 Alt 组合按 e.code 判定（macOS Option 会改写 e.key）。
    *  Esc：先关对比浮层 / 自绘菜单；焦点不在编辑器内且为侧边栏形态时关闭侧边栏
@@ -905,6 +907,18 @@ export class AppController {
   private bindGlobalKeys(): void {
     document.addEventListener('keydown', (e) => {
       const mod = e.metaKey || e.ctrlKey;
+      // v1.7.2：切 tab 后焦点留在 tab 按钮上（点击与 Alt+1/2/3 都是），
+      // CM6 的 searchKeymap 只在编辑器内触发，Ctrl+F 会落到浏览器原生查找。
+      // 全局兜底：焦点不在任一编辑器内时，把焦点交回输入区再开查找面板。
+      // 输出区内的 Ctrl+F 仍由 CM6 keymap 处理（焦点在 .cm-editor 内不接管）。
+      if (mod && !e.shiftKey && !e.altKey && (e.code === 'KeyF' || e.key.toLowerCase() === 'f')) {
+        const active = document.activeElement as HTMLElement | null;
+        if (!active?.closest?.('.cm-editor')) {
+          e.preventDefault();
+          this.in.openSearch();
+          return;
+        }
+      }
       // v1.5.1 / N02：macOS 下 Option+1/2/3/T 的 e.key 是 ¡/™/£/† 等特殊字符，
       // 必须优先按物理键位 e.code 判定；e.key 仅作无 code（jsdom / 老浏览器）时兜底。
       const codeDigit = /^Digit[0-9]$/.test(e.code) ? e.code.slice(5) : '';

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JSON Dialect",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "minimum_chrome_version": "114",
   "description": "Python 字面量 / JSON / Java 转义串 / Map.toString() 四向转换，纯本地、容错优先",
   "permissions": [

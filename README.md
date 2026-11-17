@@ -7,7 +7,7 @@
 > **零网络 · 零埋点 · 零落盘。** 全部转换在浏览器本地完成，
 > manifest 仅声明 `["storage", "sidePanel"]` 两项权限，**无任何 host 权限**。
 >
-> **当前版本 v1.7.1**（2026-11-17）—— **缺陷修复批次**：修复放大页刷新丢编辑（页面卸载前持续写页面级快照）、继承转义 tab 残留 Python 高亮/折叠、判定条 LED 被抹掉、错误态输出语言错配；输出区 T2 路径闸门前移，偏好未变时少跑一次转换；清理死代码与重复定义，修复 3 条假绿测试并补 3 项回归（410 用例）；黄金样本生成防覆盖、隐私门禁补产物侧网络 API 检查、依赖去重、文档口径同步。PRD 升 **v1.11**（FR-U1～U8 / AC-157～162）。已知限制：切 tab 后首次 `Ctrl+F` 可能需敲一键激活（详见快捷键节）。详见 `docs/03-研发/v1.7.1-交付说明.md` 与下方版本历史。上一版 v1.7.0（节点折叠批次）已发布：[Release v1.7.0](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.7.0)。
+> **当前版本 v1.7.2**（2026-11-17）—— **维护批次**：`@codemirror/*` 四个补丁/次版本升级（view 6.43.15 / state 6.7.6 / language 6.13.1 / autocomplete 6.20.4）；修复「切 tab 后首次 `Ctrl+F` 打不开查找面板」——根因不是 CM6 panelPlugin，而是切 tab 后焦点留在 tab 按钮上、CM6 keymap 收不到按键，现由全局键位兜底把焦点交回输入区；新增 `THIRD-PARTY-NOTICES.md` 与 `check:notices` 门禁（19 个生产依赖，全部 MIT）。Vitest **412**、真机 **94/94**。上次发布版 v1.7.1 见 [Release v1.7.1](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.7.1)。详见 `docs/03-研发/v1.7.2-交付说明.md` 与下方版本历史。
 >
 > **最低 Chrome 版本 114**（`sidePanel` 于 114 引入；`sidePanel.close()` 需 141+，代码已有能力检测与 `window.close()` 兜底）。
 
@@ -37,19 +37,20 @@ npm run verify:all      # 全量门禁（推荐，见下）
 npm run build           # 构建 → dist/
 ```
 
-**`npm run verify:all`** 是唯一的发布门禁，串起五项：
+**`npm run verify:all`** 是唯一的发布门禁，串起六项：
 
 | 门禁项 | 内容 | 当前结果 |
 |---|---|---|
 | `typecheck` | `tsc --noEmit`，严格模式 | 0 错误 |
-| `test` | Vitest 全量（20 个文件，含 `v151-regressions.test.ts` 21 项、`v16-features.test.ts` 9 项、`v17-features.test.ts` 15 项，以及体检新增 3 项继承/快照回归） | **410 通过 / 0 失败**（v1.7.0 发布时为 407） |
+| `check:notices` | `THIRD-PARTY-NOTICES.md` 与生产依赖树逐项一致（19 个组件） | 通过 |
+| `test` | Vitest 全量（21 个文件，含 `v151-regressions.test.ts` 21 项、`v16-features.test.ts` 9 项、`v17-features.test.ts` 15 项、`v172-maintenance.test.ts` 2 项，以及体检新增 3 项继承/快照回归） | **412 通过 / 0 失败**（v1.7.1 发布时为 410） |
 | `build` | Vite 构建 + manifest 拷入产物（含侧边栏/worker 存在性断言） | 通过 |
 | `verify:python` | 当前引擎运行 67 个 convert 样本 + 16 个转义样本，用目标语言解释器 / 独立 Python 实现反解并与黄金样本比对 | **83 项全部通过** |
 | `check:privacy` | 隐私与权限静态审查 | 通过 |
 
 单跑某一类：`npm run test:unit` / `test:prop` / `test:ac` / `bench`。
 
-**`npm run verify:ui`（v1.5 起为第二门禁，改 UI 必跑）**：puppeteer 驱动真实 Chrome，**91 项断言**（v1.7.0 起，v1.6.0 为 75 项） —— CM6 部件令牌落地（`getComputedStyle` 实测）、三档宽度 resize 无溢出、浮层不被裁、`Ctrl+F` 搜索面板造型、深色 computed style、类型面板真降级、空态示例、`Tab` 焦点链、macOS Option 键位、`Esc` 二次确认等 jsdom 测不出的检查。
+**`npm run verify:ui`（v1.5 起为第二门禁，改 UI 必跑）**：puppeteer 驱动真实 Chrome，**94 项断言**（v1.7.2 起，v1.7.0 为 91 项） —— CM6 部件令牌落地（`getComputedStyle` 实测）、三档宽度 resize 无溢出、浮层不被裁、`Ctrl+F` 搜索面板造型与切 tab 后的焦点兜底、深色 computed style、类型面板真降级、空态示例、`Tab` 焦点链、macOS Option 键位、`Esc` 二次确认等 jsdom 测不出的检查。
 
 > **前置**：脚本以 `http://127.0.0.1:8794` 访问构建产物，需另开终端先跑
 > `python3 -m http.server 8794 --directory dist`（服务需保持运行）；未起服务会直接连接被拒。
@@ -120,7 +121,7 @@ npm run build           # 构建 → dist/
 >
 > **v1.7 变更**：新增**节点折叠**（`foldGutter` + `foldKeymap`，占位符 `[+]` 文本；`Alt+Click` 折叠箭头为手风琴模式——同时折叠全部同级节点），**有意反转 v1.5 白名单「不装 foldGutter」的决策**（同 v1.6 恢复 search 的模式：这次为它正式造型了）。折叠仅 json / python 语言档可用；折叠状态零记忆，重转换后自然重置。
 >
-> **已知限制**（v1.6.0 起存在，v1.7.0 排查后记录）：切换 tab 后首次 `Ctrl/Cmd+F` 可能打不开搜索面板（CM6 panelPlugin 在编程式文档替换后的边角行为）——在编辑器内敲任意一键即恢复，不影响其他功能。升级 CodeMirror 依赖版本后可复测。
+> **已修复（v1.7.2）**：切 tab 后首次 `Ctrl/Cmd+F` 打不开搜索面板。真机探针确认根因是**焦点留在 tab 按钮上**（点击 tab 与 `Alt+1/2/3` 都如此）——CM6 的 `searchKeymap` 只监听编辑器内部，按键落到了浏览器原生查找，并非 panelPlugin 缺陷。现由控制器全局键位兜底：焦点不在任一编辑器内时接管 `Ctrl/Cmd+F`，聚焦输入区并打开查找面板；真机新增 `E5` 断言。macOS 上 `Cmd+F` 仍被浏览器查找占用，请用 `Ctrl+F`。
 >
 > **有输入时按 `Esc` 关闭侧边栏需要按两次**：首次只提示「当前输入将丢失」，3 秒内再按一次才真正关闭；空输入仍可一键关闭。这是为了避免误触后重开面板内容全失（扩展承诺输入零落盘）。
 >
@@ -299,9 +300,9 @@ docs/                     全过程文档（见下）
 
 | 目录 | 内容 |
 |---|---|
-| `docs/01-需求/` | `需求规格.md`（要什么）、`PRD.md` **v1.11**（做成什么样算对，§8 含 AC-01~162，唯一正本；v1.5.1 见 §6 FR-R / §8.13，v1.6.0 见 §6 FR-S / §8.14，v1.7.0 见 §6 FR-T / §8.15，v1.7.1 见 §6 FR-U / §8.16） |
+| `docs/01-需求/` | `需求规格.md`（要什么）、`PRD.md` **v1.12**（做成什么样算对，§8 含 AC-01~163，唯一正本；v1.5.1 见 §6 FR-R / §8.13，v1.6.0 见 §6 FR-S / §8.14，v1.7.0 见 §6 FR-T / §8.15，v1.7.1 见 §6 FR-U / §8.16，v1.7.2 见 §6 FR-U9 / §8.17） |
 | `docs/02-评审/` | `技术评审报告.md` v1.0（代码怎么写：架构、IR、目录分层、任务拆分） |
-| `docs/03-研发/` | `研发任务清单.md`、`spike-记录.md`、各版交付/发布说明；**现行：`v1.7.1-交付说明.md`**（版本存档：v1.1 ~ v1.7.0）；**`v1.5.1-v1.6.0-迭代交付总览.md`**（两版合并台账：N/E 清单逐条去向、门禁/产物/commit/tag 对照）；各版变更条目已并入 PRD v1.11 正文与本文档版本表 |
+| `docs/03-研发/` | `研发任务清单.md`、`spike-记录.md`、各版交付/发布说明；**现行：`v1.7.2-交付说明.md`**（版本存档：v1.1 ~ v1.7.1）；**`v1.5.1-v1.6.0-迭代交付总览.md`**（两版合并台账：N/E 清单逐条去向、门禁/产物/commit/tag 对照）；各版变更条目已并入 PRD v1.12 正文与本文档版本表 |
 | `docs/04-验收/` | `PRD-8-验收标准.md`（v1.0 基线 AC-01~52，历史存档；现行 AC-01~162 见 PRD §8）、`验收结论报告.md` |
 | `docs/05-缺陷/` | `缺陷7-UI初始化被storage阻塞.md`（真机 P0；v1.5.1 在放大页入口发现同类复发 N11） |
 | `docs/06-迭代/` | `v1.1-迭代提案.md`、`v1.1-需求变更清单.md` v4、`PRD-v1.3` / `PRD-v1.5` / `PRD-v1.6-变更条目.md`（均已合并存档）、`v1.3-承载形态调研与优化建议.md` 与 `v1.3-研发方案与改动清单.md`（已实施存档）、**`2026-11-02-项目全面梳理与优化建议.md`**（v1.5.0 全量采纳 + 2026-11-10 四象限复核，落地 v1.5.1 / v1.6.0，决策依据存档） |
@@ -322,6 +323,7 @@ docs/                     全过程文档（见下）
 
 | 版本 | 日期 | 要点 | 门禁 |
 |---|---|---|---|
+| **v1.7.2** | **2026-11-17** | **维护批次**：`@codemirror/*` 补丁升级（view 6.43.15 / state 6.7.6 / language 6.13.1 / autocomplete 6.20.4）；修复切 tab 后首次 `Ctrl+F` 失效（根因是焦点留在 tab 按钮，全局键位兜底接管）；新增 `THIRD-PARTY-NOTICES.md` 与 `check:notices` 门禁；PRD 升 v1.12（FR-U9 / AC-163） | **412 测试 / 83 项交叉 + 真机 94/94**（产物 509.92 kB / gzip 170.31 kB）；交付说明 `docs/03-研发/v1.7.2-交付说明.md`；本次仅提交推送，未打 tag / 未发布 Release |
 | v1.0.0 | 2026-09-21 | M0~M3 四个里程碑、28 个子任务全部完成 | 141 测试 / 40 样本，AC 51/52 |
 | v1.1.0 | 2026-09-22 | 三 tab 重构、目标格式解耦（4×3）、Java 转义输出、日志前缀、尾部残留报错 | 187 测试 / 54 样本 |
 | v1.1.1 | 2026-09-22 | 转义方向可见化 + 外层引号自动剥离；格式化/转换 tab 零改动 | 197 测试 / 54 样本 |
@@ -425,9 +427,17 @@ CM6 行号槽 / 活动行 / 选区 computed style 等于设计令牌计算值、
 25. **深色令牌挂在 `body.theme-dark` 而非 `:root`**（v1.6.0 N13）—— computed 断言读 `documentElement`
     会拿到浅色值造成假阴性；另 `.emptyhints` 用 flex 居中会把示例按钮压在 `.cm-content` 中心，
     真机 `page.click` 的坐标点击会被按钮接走 → 改顶部对齐 + `page.focus()`。
+26. **切 tab 后焦点不会自动回到编辑器**（v1.7.2）—— 点击 tab 或 `Alt+1/2/3` 后
+    `document.activeElement` 是 tab 按钮，CM6 keymap 收不到 `Ctrl+F`，症状酷似
+    「panelPlugin 坏了」。排查时先打印 activeElement；修法是在全局 keydown 里
+    对 `.cm-editor` 之外的情况兜底「聚焦输入区 + openSearchPanel」，不要重建编辑器。
 
 ---
 
 ## 许可
 
 MIT
+
+构建产物包含的第三方组件均为 MIT，完整清单、版本与版权声明见
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)（由 `npm run notices` 生成，
+`npm run check:notices` 门禁校验其与生产依赖树一致）。
