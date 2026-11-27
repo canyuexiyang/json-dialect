@@ -51,7 +51,7 @@ import {
   indentOnInput,
   bracketMatching,
   syntaxHighlighting,
-  defaultHighlightStyle,
+  HighlightStyle,
   codeFolding,
   foldGutter,
   foldKeymap,
@@ -65,7 +65,24 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { json } from '@codemirror/lang-json';
 import { python } from '@codemirror/lang-python';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { tags } from '@lezer/highlight';
+
+/**
+ * v1.8：DSH 代码着色。
+ *
+ * 颜色全部走 CSS 变量，因此切换 body.theme-dark 时不需要 reconfigure；
+ * 这替代了原来的 oneDark —— 后者会把编辑器底色接管成 #282c34，并且
+ * 深色语法色和 v1.8 的令牌层不是一套。
+ */
+const dshHighlight = HighlightStyle.define([
+  { tag: [tags.propertyName, tags.attributeName], color: 'var(--j-code-key)' },
+  { tag: [tags.string, tags.special(tags.string)], color: 'var(--j-code-string)' },
+  { tag: tags.number, color: 'var(--j-code-number)' },
+  { tag: [tags.bool, tags.null, tags.keyword], color: 'var(--j-code-keyword)' },
+  { tag: tags.comment, color: 'var(--j-code-comment)', fontStyle: 'italic' },
+  { tag: [tags.punctuation, tags.bracket, tags.separator], color: 'var(--j-code-punct)' },
+  { tag: tags.invalid, color: 'var(--dsw-alias-state-error-primary)' },
+]);
 
 /**
  * 编辑器语言。
@@ -306,7 +323,6 @@ export function createEditor(
   // v1.5：Compartment 移到编辑器实例局部 —— 原先是模块级共享，
   // 两个编辑器共用同一个键。虽然 Compartment 本身无状态、不会串台，
   // 但局部化后每个实例的生命周期一目了然。
-  const themeCompartment = new Compartment();
   const editableCompartment = new Compartment();
   const highlightCompartment = new Compartment();
   const lang = opts.lang ?? 'json';
@@ -328,7 +344,7 @@ export function createEditor(
     dropCursor(),
     EditorState.allowMultipleSelections.of(true),
     indentOnInput(),
-    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    syntaxHighlighting(dshHighlight),
     bracketMatching(),
     closeBrackets(),
     highlightActiveLine(),
@@ -353,7 +369,6 @@ export function createEditor(
     errorLineField,
     errorLineDeco,
     errorGutter,
-    themeCompartment.of(dark ? [oneDark] : []),
     highlightCompartment.of(langExt(lang)),
     editableCompartment.of([EditorView.editable.of(!readOnly), EditorState.readOnly.of(readOnly)]),
     EditorView.lineWrapping,
@@ -392,6 +407,7 @@ export function createEditor(
     state: EditorState.create({ doc: opts.doc ?? '', extensions }),
     parent,
   });
+  view.dom.classList.toggle('cm-dark', dark);
 
   return {
     view,
@@ -429,14 +445,13 @@ export function createEditor(
       }
     },
     /**
-     * v1.5 / D4：系统深浅色切换时动态换主题，不重建编辑器（保住 undo / 滚动）。
-     * 同时兑现了原先「themeCompartment 声明了却从未 reconfigure」的死代码；
-     * 零调用的 setEditable（原死代码之二）已删除 —— 只读性由构造参数一次定型。
+     * v1.8：主题色全部由 CSS 变量驱动，切深浅色只切一个类，不重建编辑器
+     * （保住 undo / 光标 / 折叠态）。原先的 oneDark theme compartment 已删除。
      */
     setDark(on: boolean): void {
-      view.dispatch({
-        effects: themeCompartment.reconfigure(on ? [oneDark] : []),
-      });
+      // v1.8：主题色全部由 CSS 变量驱动；这里只同步一个类，供宿主或
+      // 未来的 CM 专属规则使用，不再重建主题 compartment。
+      view.dom.classList.toggle('cm-dark', on);
     },
     /** 高亮错误行并滚动到视野内（M2-2） */
     highlightLine(line: number) {

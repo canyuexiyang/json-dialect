@@ -416,6 +416,35 @@ for (const width of WIDTHS) {
     check('D12/360px 点击示例即灌入输入区', filled);
     await page.screenshot({ path: `${OUT}/v15-360-empty-examples.png` });
 
+    // ── v1.8 / 侧边栏更多菜单：默认收拢，打开后不越界，chip 也能开 ──
+    const menuProbe = await page.evaluate(() => {
+      const trigger = document.getElementById('moreActions');
+      const menu = document.getElementById('moreMenu');
+      const chip = document.getElementById('modeChip');
+      const actions = [...document.querySelectorAll('.toolbar__actions .btn')].map((b) => b.id);
+      if (!trigger || !menu) return { present: false };
+      trigger.click();
+      const r = menu.getBoundingClientRect();
+      const open = !menu.hidden;
+      const inside = r.right <= innerWidth + 1 && r.top >= -1 && r.bottom <= innerHeight + 1;
+      const items = [...menu.querySelectorAll('.btn:not([hidden])')].map((b) => b.id);
+      chip?.click();
+      const closed = menu.hidden;
+      return { present: true, open, inside, items, closed, actions, chip: chip?.textContent?.trim() ?? '' };
+    });
+    check(
+      `V1.8/${width}px 更多菜单默认收拢 / 打开不越界 / chip 可开合`,
+      menuProbe.present &&
+        menuProbe.open &&
+        menuProbe.inside &&
+        menuProbe.items.length >= 3 &&
+        menuProbe.closed &&
+        menuProbe.actions.includes('btnCopy') &&
+        menuProbe.actions.includes('btnDownload') &&
+        menuProbe.chip.length > 0,
+      menuProbe,
+    );
+
     // ── v1.5.1 / N04：Tab 不再被 CM6 的 indentWithTab 截留 ──
     await page.evaluate(() => document.querySelector('#editorIn .cm-content')?.focus());
     await page.keyboard.press('Tab');

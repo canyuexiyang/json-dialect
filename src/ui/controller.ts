@@ -31,6 +31,7 @@ import { loadPrefs, savePrefs, writeSession, discardSession, withTimeout, type P
 import { closeSidePanel } from './sidePanel.js';
 import { createTypePanel, isOverrideType, type OverrideType } from './typeWidgets.js';
 import { decorateSelect, bindHiddenClose, closeOpenSelect, type SelectHandle } from './select.js';
+import { setupMoreMenu } from './moreMenu.js';
 
 export interface DomRefs {
   fmtLabel: HTMLElement;
@@ -44,6 +45,16 @@ export interface DomRefs {
   root?: HTMLElement;
   /** 状态灯（v1.2） */
   statusLed?: HTMLElement;
+  /** v1.8：宽屏状态行的模式说明（容错 · 美化 · 2 空格） */
+  statusMeta?: HTMLElement;
+  /** v1.8：侧边栏状态行的模式 chip（点开更多菜单） */
+  modeChip?: HTMLButtonElement;
+  /** v1.8：格式化 tab 的「输出 · 标准 JSON」提示 */
+  targetHint?: HTMLElement;
+  /** v1.8：下载按钮内的文字节点（保留图标，不再被 textContent 清掉） */
+  downloadLabel?: HTMLElement;
+  /** v1.8：复制按钮内的文字节点（保留图标） */
+  copyLabel?: HTMLElement;
   /** tab 条（FR-L1）：可选 —— 老测试挂载的无 tab DOM 也能跑 */
   tabFormat?: HTMLButtonElement;
   tabEscape?: HTMLButtonElement;
@@ -61,6 +72,8 @@ export interface DomRefs {
   wrapQuotes?: HTMLInputElement;
   editorIn: HTMLElement;
   editorOut: HTMLElement;
+  /** v1.8：输出区的空态说明（仅空输入时显示） */
+  emptyOut?: HTMLElement;
   /** v1.5 / D12：空态一键示例 */
   emptyHints?: HTMLElement;
   /** v1.5 / D26：清空输入 */
@@ -158,6 +171,12 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 const PATH_PLACEHOLDER = '点选输入或输出中的键或值';
+
+/** v1.8：内联提示图标（16 viewBox / currentColor，不引第三方） */
+const FIX_ICON =
+  '<svg class="ico fixbar__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14 13H2z"/><path d="M8 6.5v3"/><path d="M8 11.4h.01"/></svg>';
+const SUGGEST_ICON =
+  '<svg class="ico suggest__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14 13H2z"/><path d="M8 6.5v3"/><path d="M8 11.4h.01"/></svg>';
 
 /**
  * v1.5 / D12：空态一键示例。
@@ -298,6 +317,9 @@ export class AppController {
 
     this.bindEvents();
     this.bindGlobalKeys();
+    // v1.8：侧边栏把档位 / 缩进 / 片段 / 对比移进「更多」菜单。
+    // 必须在 bindEvents 之后（监听已绑定），renderTabs 之前（首屏标签正确）。
+    setupMoreMenu();
     this.applySplit(this.splitRatio);
     this.renderTabs();
     this.clearPath(); // v1.4：格式化 tab 首屏先给占位，避免空白条
@@ -432,6 +454,50 @@ export class AppController {
     const label = this.dom.fmtLabel.querySelector<HTMLElement>('.detectbar__text');
     if (label) label.textContent = text;
     else this.dom.fmtLabel.textContent = text;
+    // v1.8：小圆点表达识别态 —— 待输入灰、自动识别绿、手动锁定琥珀
+    const idle = text === '待输入' || text === '';
+    this.dom.fmtLabel.classList.toggle('is-idle', idle);
+    this.dom.fmtLabel.classList.toggle('is-locked', !idle && this.locked !== null);
+  }
+
+  /** v1.8：模式按钮的完整文案给测试 / 读屏，短文案给 chip 视觉 */
+  private setModeButton(btn: HTMLButtonElement, full: string, short: string): void {
+    if (btn.textContent !== full) btn.textContent = full;
+    if (btn.dataset.short !== short) btn.dataset.short = short;
+    btn.title = `${full}（点击切换）`;
+  }
+
+  /** v1.8：状态行的模式说明 + 侧边栏 chip 文案 */
+  private syncModeMeta(): void {
+    const strict = this.strict ? '严格' : '容错';
+    const compact = this.compact ? '压缩' : '美化';
+    let meta = `${strict} · ${compact} · 2 空格`;
+    let chip = `${strict} · ${compact}`;
+    if (this.tab === 'escape') {
+      const style = ESCAPE_LABEL[this.escapeStyle].replace(' 字符串', '');
+      meta = `${style} · ${ESCAPE_DIR_LABEL[this.escapeDir]}`;
+      chip = meta;
+    } else if (this.tab === 'convert') {
+      meta = `${compact} · 2 空格`;
+      chip = compact;
+    }
+    if (this.dom.statusMeta) this.dom.statusMeta.textContent = meta;
+    if (this.dom.modeChip) {
+      this.dom.modeChip.textContent = chip;
+      this.dom.modeChip.title = `${meta}（点击切换）`;
+    }
+  }
+
+  /** v1.8：格式化 tab 的「输出 · …」提示；Map 回退会显示 Python */
+  private syncTargetHint(): void {
+    const el = this.dom.targetHint;
+    if (!el) return;
+    if (this.tab !== 'format' || !this.state) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    el.textContent = `输出 · ${FORMAT_LABEL[this.state.outputLang]}`;
   }
 
   /** 读取界面偏好；超时或失败都按默认值继续，不影响已就绪的 UI */
@@ -1053,39 +1119,93 @@ export class AppController {
       this.setStatus('没有可对比的内容');
       return;
     }
-    const overlay = document.createElement('div');
-    overlay.className = 'cmp';
-    overlay.id = 'compareOverlay';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-label', '输入与输出对比');
     // v1.6 / N12：逐行同步生成两列 div，大文本会瞬间创建数十万节点。
     // 完整 diff 算法留待后续；这里先给硬上限 + 明确截断提示，保证界面不卡死。
     if (inText.length + outText.length > 200_000) {
       this.setStatus('内容过大，暂不支持并排对比（请用放大页或拆分文本）');
       return;
     }
+
     const inLines = inText.split('\n');
     const outLines = outText.split('\n');
     const MAX_ROWS = 400;
     const total = Math.max(inLines.length, outLines.length);
     const rows = Math.min(total, MAX_ROWS);
+
+    const inLang =
+      this.tab === 'escape' ? '纯文本' : FORMAT_LABEL[this.state?.source ?? this.locked ?? 'json'];
+    const outLang = this.tab === 'escape' ? '转义串' : FORMAT_LABEL[this.lastGoodLang];
+
+    const overlay = document.createElement('div');
+    overlay.className = 'cmp';
+    overlay.id = 'compareOverlay';
+    overlay.setAttribute('role', 'presentation');
+
+    const dialog = document.createElement('div');
+    dialog.className = 'cmp__dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-label', '输入与输出对比');
+
     const head = document.createElement('div');
     head.className = 'cmp__head';
+    const headIcon = document.createElement('span');
+    headIcon.className = 'cmp__head-icon';
+    headIcon.setAttribute('aria-hidden', 'true');
+    headIcon.innerHTML =
+      '<svg class="ico" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="4.5" height="9" rx="1"/><rect x="9" y="3.5" width="4.5" height="9" rx="1"/></svg>';
+    const headText = document.createElement('div');
+    headText.className = 'cmp__head-text';
     const title = document.createElement('span');
     title.className = 'cmp__title';
-    title.textContent =
-      `对比：输入 ${inLines.length} 行 · 输出 ${outLines.length} 行（高亮 = 与对侧同位置不同）` +
-      (total > MAX_ROWS ? ` · 仅显示前 ${MAX_ROWS} 行` : '');
-    head.appendChild(title);
-    const closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.className = 'btn btn--ghost';
-    closeBtn.textContent = '关闭 (Esc)';
-    closeBtn.addEventListener('click', () => this.closeCompare());
-    head.appendChild(closeBtn);
-    overlay.appendChild(head);
+    title.textContent = '对比输入与输出';
+    const sub = document.createElement('span');
+    sub.className = 'cmp__sub';
+    headText.appendChild(title);
+    headText.appendChild(sub);
+    const spacer = document.createElement('span');
+    spacer.className = 'spacer';
+    const closeHead = document.createElement('button');
+    closeHead.type = 'button';
+    closeHead.className = 'btn btn--ghost btn--icon';
+    closeHead.setAttribute('aria-label', '关闭');
+    closeHead.title = '关闭';
+    closeHead.textContent = '×';
+    closeHead.addEventListener('click', () => this.closeCompare());
+    head.appendChild(headIcon);
+    head.appendChild(headText);
+    head.appendChild(spacer);
+    head.appendChild(closeHead);
+
     const body = document.createElement('div');
     body.className = 'cmp__body';
+
+    let diffRows = 0;
+    const makeColHead = (label: string, lang: string, count: number): HTMLElement => {
+      const el = document.createElement('div');
+      el.className = 'cmp__colhead';
+      const t = document.createElement('span');
+      t.className = 'cmp__coltitle';
+      t.textContent = label;
+      const l = document.createElement('span');
+      l.className = 'cmp__collang';
+      l.textContent = lang;
+      const c = document.createElement('span');
+      c.className = 'cmp__colcount';
+      c.textContent = `${count} 行`;
+      el.appendChild(t);
+      el.appendChild(l);
+      el.appendChild(c);
+      return el;
+    };
+
+    const leftWrap = document.createElement('div');
+    leftWrap.className = 'cmp__colwrap';
+    const rightWrap = document.createElement('div');
+    rightWrap.className = 'cmp__colwrap';
+    leftWrap.appendChild(makeColHead('输入', inLang, inLines.length));
+    rightWrap.appendChild(makeColHead('输出', outLang, outLines.length));
+
     const left = document.createElement('pre');
     const right = document.createElement('pre');
     left.className = 'cmp__col';
@@ -1093,6 +1213,7 @@ export class AppController {
     for (let i = 0; i < rows; i++) {
       const a = inLines[i];
       const b = outLines[i];
+      if (a !== b) diffRows++;
       for (const [col, line] of [
         [left, a],
         [right, b],
@@ -1103,9 +1224,44 @@ export class AppController {
         col.appendChild(div);
       }
     }
-    body.appendChild(left);
-    body.appendChild(right);
-    overlay.appendChild(body);
+    leftWrap.appendChild(left);
+    rightWrap.appendChild(right);
+    body.appendChild(leftWrap);
+    body.appendChild(rightWrap);
+
+    sub.textContent =
+      `${inLang} → ${outLang} · ${rows} 行` +
+      (total > MAX_ROWS ? `（仅前 ${MAX_ROWS} 行）` : '') +
+      ` · ${diffRows} 行不同`;
+
+    const foot = document.createElement('div');
+    foot.className = 'cmp__foot';
+    const note = document.createElement('span');
+    note.className = 'cmp__foot-note';
+    note.textContent = '只标注与对侧同位置不同的行 · 相同行不额外着色';
+    const footSpacer = document.createElement('span');
+    footSpacer.className = 'spacer';
+    const escKey = document.createElement('span');
+    escKey.className = 'kbd';
+    escKey.textContent = 'Esc';
+    const escNote = document.createElement('span');
+    escNote.className = 'cmp__foot-note';
+    escNote.textContent = '关闭';
+    const closeFoot = document.createElement('button');
+    closeFoot.type = 'button';
+    closeFoot.className = 'btn btn--sm';
+    closeFoot.textContent = '关闭';
+    closeFoot.addEventListener('click', () => this.closeCompare());
+    foot.appendChild(note);
+    foot.appendChild(footSpacer);
+    foot.appendChild(escKey);
+    foot.appendChild(escNote);
+    foot.appendChild(closeFoot);
+
+    dialog.appendChild(head);
+    dialog.appendChild(body);
+    dialog.appendChild(foot);
+    overlay.appendChild(dialog);
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) this.closeCompare();
     });
@@ -1267,6 +1423,9 @@ export class AppController {
     this.dom.paneOut?.setAttribute('aria-labelledby', activeTabId);
     // v1.5 / D1：格式化 tab 下 Map 来源的回退标签（run 里更新文案与显隐）
     this.syncSameTargetLabel();
+    // v1.8：状态行模式说明 / 格式化输出提示
+    this.syncModeMeta();
+    this.syncTargetHint();
   }
 
   /** v1.5 / D1：格式化 tab 且来源为 Map 时，明示「→ Python 字面量」 */
@@ -1319,6 +1478,10 @@ export class AppController {
     this.locked = v;
     this.dom.lockBadge.hidden = v === null;
     this.dom.resetAuto.hidden = v === null;
+    if (!this.dom.fmtLabel.hidden) {
+      this.dom.fmtLabel.classList.toggle('is-locked', v !== null);
+      this.dom.fmtLabel.classList.remove('is-idle');
+    }
   }
 
   private async persist(): Promise<void> {
@@ -1397,6 +1560,7 @@ export class AppController {
     box.className = 'suggest';
     box.id = 'oversizeBox';
     box.setAttribute('role', 'status');
+    box.innerHTML = SUGGEST_ICON;
     const tip = document.createElement('span');
     tip.className = 'suggest__tip';
     tip.textContent = '文本过大，已关闭实时转换。仍要转换吗？';
@@ -1423,6 +1587,7 @@ export class AppController {
   run(text: string): void {
     if (this.timer) window.clearTimeout(this.timer);
     this.timer = undefined;
+    if (this.dom.emptyOut) this.dom.emptyOut.hidden = true;
     if (text.trim() === '') {
       this.state = null;
       this.escapeOutput = '';
@@ -1467,6 +1632,7 @@ export class AppController {
 
     this.state = result;
     this.updateStats(text, result.output);
+    this.syncTargetHint();
 
     // 更新判定条
     this.setFmtLabel(FORMAT_LABEL[result.source]);
@@ -1639,6 +1805,7 @@ export class AppController {
         : '';
 
     this.dom.fixbar.innerHTML =
+      FIX_ICON +
       `<span class="fixbar__summary">${escapeHtml(parts.join(' · '))} <span class="fixbar__caret">▾</span></span>` +
       `<pre class="fixbar__detail">${escapeHtml(dupRows + rows)}</pre>`;
   }
@@ -1658,6 +1825,7 @@ export class AppController {
     box.className = 'suggest';
     box.id = 'suggestBox';
     box.setAttribute('role', 'status');
+    box.innerHTML = SUGGEST_ICON;
     let hasAny = false;
 
     if (this.tab === 'format' && this.strict) {
@@ -1740,6 +1908,7 @@ export class AppController {
     box.className = 'suggest';
     box.id = 'prefixHintBox';
     box.setAttribute('role', 'status'); // v1.5 / D11：读屏可感知
+    box.innerHTML = SUGGEST_ICON;
 
     const tip = document.createElement('span');
     tip.className = 'suggest__tip';
@@ -1776,8 +1945,12 @@ export class AppController {
     this.dom.btnFormat.disabled = false;
     this.dom.btnCompact.disabled = false;
     this.dom.btnConvert.disabled = false;
-    this.dom.btnDownload.textContent =
-      this.tab === 'escape' ? '下载 .txt' : downloadLabel(this.lastGoodLang);
+    const label = this.tab === 'escape' ? '下载 .txt' : downloadLabel(this.lastGoodLang);
+    // v1.8：保留下载图标 —— 只改文字节点，绝不再 btn.textContent 清空子节点
+    if (this.dom.downloadLabel) this.dom.downloadLabel.textContent = label;
+    else this.dom.btnDownload.textContent = label;
+    this.dom.btnDownload.title = label;
+    this.dom.btnDownload.setAttribute('aria-label', label);
   }
 
   /**
@@ -1810,7 +1983,10 @@ export class AppController {
     this.clearPath();
     // v1.5 / D12：空态给一键示例，并撤掉判定条上误导性的「标准 JSON」默认值
     if (this.dom.emptyHints) this.dom.emptyHints.hidden = false;
+    if (this.dom.emptyOut) this.dom.emptyOut.hidden = false;
+    if (this.dom.targetHint) this.dom.targetHint.hidden = true;
     this.setFmtLabel('待输入');
+    this.syncModeMeta();
     this.updateStats('', '');
   }
 
@@ -1827,15 +2003,16 @@ export class AppController {
     if (!payload) return;
     const res = await copyText(payload);
     if (res.ok) {
-      const old = this.dom.btnCopy.textContent;
-      this.dom.btnCopy.textContent = '✓ 已复制';
+      const label = this.dom.copyLabel ?? this.dom.btnCopy;
+      const old = label.textContent;
+      label.textContent = '已复制';
       // v1.2：整键闪一下信号色 —— 原来只改文字，反馈太弱
       this.dom.btnCopy.classList.remove('btn--flash');
       // 强制回流以重启动画（连续复制两次时第二下也要闪）
       void this.dom.btnCopy.offsetWidth;
       this.dom.btnCopy.classList.add('btn--flash');
       setTimeout(() => {
-        this.dom.btnCopy.textContent = old;
+        label.textContent = old;
         this.dom.btnCopy.classList.remove('btn--flash');
       }, 2000);
       this.setStatus(res.message);

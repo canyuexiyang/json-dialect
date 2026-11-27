@@ -1,6 +1,6 @@
 # 第三方组件许可声明
 
-本项目（json-dialect 1.7.2）的构建产物包含下列第三方组件。
+本项目（json-dialect 1.8.0）的构建产物包含下列第三方组件。
 本文件由 `npm run notices` 依据当前 `package-lock.json` 与已安装的 **生产依赖** 生成，
 请勿手工编辑；升级依赖后运行 `npm run notices` 重新生成。
 
@@ -20,7 +20,6 @@
 | [@codemirror/search](https://code.haverbeke.berlin/codemirror/search) | 6.7.2 | MIT | Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others |
 | [@codemirror/state](https://code.haverbeke.berlin/codemirror/state) | 6.7.6 | MIT | Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others |
 | [@codemirror/streamparser](https://code.haverbeke.berlin/codemirror/streamparser) | 6.0.0 | MIT | Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others |
-| [@codemirror/theme-one-dark](https://github.com/codemirror/theme-one-dark) | 6.1.3 | MIT | Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others |
 | [@codemirror/view](https://code.haverbeke.berlin/codemirror/view) | 6.43.15 | MIT | Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others |
 | [@lezer/common](https://github.com/lezer-parser/common) | 1.5.2 | MIT | Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others |
 | [@lezer/highlight](https://github.com/lezer-parser/highlight) | 1.2.3 | MIT | Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others |
@@ -36,7 +35,7 @@
 
 ### MIT
 
-适用于：@codemirror/autocomplete 6.20.4、@codemirror/commands 6.11.1、@codemirror/lang-json 6.0.2、@codemirror/lang-python 6.2.1、@codemirror/language 6.13.1、@codemirror/search 6.7.2、@codemirror/state 6.7.6、@codemirror/streamparser 6.0.0、@codemirror/theme-one-dark 6.1.3、@codemirror/view 6.43.15、@lezer/common 1.5.2、@lezer/highlight 1.2.3、@lezer/json 1.0.3、@lezer/lr 1.4.10、@lezer/python 1.1.19、@marijn/find-cluster-break 1.0.4、crelt 1.0.7、style-mod 4.1.4、w3c-keyname 2.2.8。
+适用于：@codemirror/autocomplete 6.20.4、@codemirror/commands 6.11.1、@codemirror/lang-json 6.0.2、@codemirror/lang-python 6.2.1、@codemirror/language 6.13.1、@codemirror/search 6.7.2、@codemirror/state 6.7.6、@codemirror/streamparser 6.0.0、@codemirror/view 6.43.15、@lezer/common 1.5.2、@lezer/highlight 1.2.3、@lezer/json 1.0.3、@lezer/lr 1.4.10、@lezer/python 1.1.19、@marijn/find-cluster-break 1.0.4、crelt 1.0.7、style-mod 4.1.4、w3c-keyname 2.2.8。
 
 ```text
 Permission is hereby granted, free of charge, to any person obtaining a copy
