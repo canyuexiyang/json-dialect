@@ -7,7 +7,7 @@
 > **零网络 · 零埋点 · 零落盘。** 全部转换在浏览器本地完成，
 > manifest 仅声明 `["storage", "sidePanel"]` 两项权限，**无任何 host 权限**。
 >
-> **当前版本 v1.8.0**（2026-11-27）—— **DSH「中性精修」视觉重构**：单一令牌层 + 0.5px 发丝线 + 反色主按钮；侧边栏「模式 chip + 更多菜单」；CM6 语法高亮改 CSS 变量 `HighlightStyle`（移除 `oneDark`）；空态/报错/类型面板/对比浮层全部令牌化。业务语义、隐私、权限零变化。Vitest **416**、真机 **95/95**。视觉规范见 [`docs/03-研发/v1.8-UI设计规范.md`](docs/03-研发/v1.8-UI设计规范.md)，交付说明见 [`v1.8.0`](docs/03-研发/v1.8.0-交付说明.md)。上次发布版 v1.7.1 见 [Release v1.7.1](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.7.1)。
+> **当前版本 v1.8.0**（2026-11-27）—— **DSH「中性精修」视觉重构**：单一令牌层 + 0.5px 发丝线 + 反色主按钮；侧边栏「模式 chip + 更多菜单」；CM6 语法高亮改 CSS 变量 `HighlightStyle`（移除 `oneDark`）；空态/报错/类型面板/对比浮层全部令牌化。业务语义、隐私、权限零变化。Vitest **416**、真机 **95/95**。视觉规范见 [`docs/03-研发/v1.8-UI设计规范.md`](docs/03-研发/v1.8-UI设计规范.md)，交付说明见 [`v1.8.0`](docs/03-研发/v1.8.0-交付说明.md)。本次发布版 v1.8.0 见 [Release v1.8.0](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.8.0)；上一版 v1.7.1 见 [Release v1.7.1](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.7.1)。
 >
 > **最低 Chrome 版本 114**（`sidePanel` 于 114 引入；`sidePanel.close()` 需 141+，代码已有能力检测与 `window.close()` 兜底）。
 
@@ -317,7 +317,7 @@ docs/                     全过程文档（见下）
 
 | 版本 | 日期 | 要点 | 门禁 |
 |---|---|---|---|
-| **v1.8.0** | **2026-11-27** | **DSH「中性精修」视觉重构**：单一令牌层 + 0.5px 发丝线 + 反色主按钮；侧边栏模式 chip + 更多菜单；CM6 语法高亮改 CSS 变量 `HighlightStyle`（移除 `oneDark`）；空态/报错/类型面板/对比浮层令牌化；PRD 升 v1.13（FR-V1～V5 / AC-164～166）；新增视觉规范 `v1.8-UI设计规范.md`、9 张真机截图 | **416 测试 / 83 项交叉 + 真机 95/95**；交付说明 `docs/03-研发/v1.8.0-交付说明.md`；tag `v1.8.0` / Release |
+| **v1.8.0** | **2026-11-27** | **DSH「中性精修」视觉重构**：单一令牌层 + 0.5px 发丝线 + 反色主按钮；侧边栏模式 chip + 更多菜单；CM6 语法高亮改 CSS 变量 `HighlightStyle`（移除 `oneDark`）；空态/报错/类型面板/对比浮层令牌化；PRD 升 v1.13（FR-V1～V5 / AC-164～166）；新增视觉规范 `v1.8-UI设计规范.md`、9 张真机截图 | **416 测试 / 83 项交叉 + 真机 95/95**（产物 515.63 kB / gzip 171.75 kB）；交付说明 `docs/03-研发/v1.8.0-交付说明.md`；tag `v1.8.0` / [Release](https://github.com/canyuexiyang/json-dialect/releases/tag/v1.8.0) |
 | **v1.7.2** | **2026-11-17** | **维护批次**：`@codemirror/*` 补丁升级（view 6.43.15 / state 6.7.6 / language 6.13.1 / autocomplete 6.20.4）；修复切 tab 后首次 `Ctrl+F` 失效（根因是焦点留在 tab 按钮，全局键位兜底接管）；新增 `THIRD-PARTY-NOTICES.md` 与 `check:notices` 门禁；PRD 升 v1.12（FR-U9 / AC-163） | **412 测试 / 83 项交叉 + 真机 94/94**（产物 509.92 kB / gzip 170.31 kB）；交付说明 `docs/03-研发/v1.7.2-交付说明.md`；本次仅提交推送，未打 tag / 未发布 Release |
 | v1.0.0 | 2026-09-21 | M0~M3 四个里程碑、28 个子任务全部完成 | 141 测试 / 40 样本，AC 51/52 |
 | v1.1.0 | 2026-09-22 | 三 tab 重构、目标格式解耦（4×3）、Java 转义输出、日志前缀、尾部残留报错 | 187 测试 / 54 样本 |
